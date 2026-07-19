@@ -1,0 +1,54 @@
+<div class="container">
+    <div class="section__header reveal">
+        <span class="section__label">Learning</span>
+        <h2 class="section__title">Education & Certifications</h2>
+        <p class="section__subtitle">Continuous learning through academic excellence and professional certifications</p>
+    </div>
+
+    <div class="edu__grid">
+        <!-- Academic Education -->
+        <div class="reveal">
+            <h3 class="edu__block-title">
+                <span class="edu__block-icon">🎓</span> Academic Education
+            </h3>
+            {{ range .Education }}
+            <div class="edu-card">
+                <h4 class="edu-card__title">{{ .Degree }}</h4>
+                <p class="edu-card__institution">{{ .Institution }}</p>
+                {{ if .DateRange }}
+                <span class="edu-card__date">📅 {{ .DateRange }}</span>
+                {{ end }}
+            </div>
+            {{ end }}
+
+            <!-- Languages Card -->
+            <div class="languages-card">
+                <h4 class="languages-card__title">🗣️ Languages</h4>
+                <div class="languages-card__list">
+                    <div class="languages-card__item">
+                        <span>🇲🇽 Spanish</span>
+                        <span class="languages-card__level">— Native</span>
+                    </div>
+                    <div class="languages-card__item">
+                        <span>🇺🇸 English</span>
+                        <span class="languages-card__level">— Fluent</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Courses & Certifications -->
+        <div class="reveal reveal-delay-1">
+            <h3 class="edu__block-title">
+                <span class="edu__block-icon">📜</span> Courses & Certifications
+            </h3>
+            {{ range .Courses }}
+            <div class="edu-card">
+                <h4 class="edu-card__title">{{ .Name }}</h4>
+                <p class="edu-card__institution">{{ .Institution }}</p>
+                <span class="edu-card__date">📅 {{ .DateRange }}</span>
+            </div>
+            {{ end }}
+        </div>
+    </div>
+</div>

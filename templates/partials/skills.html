@@ -1,0 +1,30 @@
+<div class="container">
+    <div class="section__header reveal">
+        <span class="section__label">Expertise</span>
+        <h2 class="section__title">Technical Skills</h2>
+        <p class="section__subtitle">A broad range of technical competencies across networking, security, and software development</p>
+    </div>
+
+    <div class="skills__grid stagger-children">
+        {{ range . }}
+        <div class="skill-card">
+            <div class="skill-card__icon">
+                {{ if eq .Category "Switching" }}🔀{{ end }}
+                {{ if eq .Category "Routing" }}🛤️{{ end }}
+                {{ if eq .Category "Security" }}🔒{{ end }}
+                {{ if eq .Category "WAN" }}🌐{{ end }}
+                {{ if eq .Category "Programming" }}💻{{ end }}
+                {{ if eq .Category "Hardware Description" }}🔧{{ end }}
+                {{ if eq .Category "Operating Systems" }}🖥️{{ end }}
+                {{ if eq .Category "Software & Tools" }}⚙️{{ end }}
+            </div>
+            <h3 class="skill-card__title">{{ .Category }}</h3>
+            <div class="skill-card__tags" x-data="{ items: '{{ .Items }}'.split(', ') }">
+                <template x-for="item in items" :key="item">
+                    <span class="skill-tag" x-text="item"></span>
+                </template>
+            </div>
+        </div>
+        {{ end }}
+    </div>
+</div>

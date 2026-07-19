@@ -1,0 +1,12 @@
+.git
+.gitignore
+Dockerfile
+.dockerignore
+portfolio.db
+portfolio.db-journal
+portfolio.db-shm
+portfolio.db-wal
+portfolio
+node_modules
+.DS_Store
+*.log

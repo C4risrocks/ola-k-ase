@@ -1,0 +1,54 @@
+<div class="container">
+    <div class="section__header reveal">
+        <span class="section__label">Who I Am</span>
+        <h2 class="section__title">About Me</h2>
+        <p class="section__subtitle">Passionate about technology, networking, and building things that matter</p>
+    </div>
+
+    <div class="about__grid">
+        <div class="about__image-wrapper reveal">
+            <div class="about__image-card">
+                <div class="about__image-placeholder">👨‍💻</div>
+            </div>
+            <div class="about__float-card about__float-card--1">
+                <div class="about__float-icon">🎓</div>
+                <div>
+                    <div style="font-weight:600; font-size:0.9rem;">UNAM</div>
+                    <div style="font-size:0.75rem; color:var(--clr-text-muted);">Ingeniería</div>
+                </div>
+            </div>
+            <div class="about__float-card about__float-card--2">
+                <div class="about__float-icon">🌐</div>
+                <div>
+                    <div style="font-weight:600; font-size:0.9rem;">Networking</div>
+                    <div style="font-size:0.75rem; color:var(--clr-text-muted);">CCNA · CCNP</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="about__text reveal reveal-delay-1">
+            <p>{{ .AboutText }}</p>
+            <p>Engineer Student in process for obtaining his Computer Engineering degree at Facultad de Ingeniería, Universidad Nacional Autónoma de México.</p>
+
+            <div class="about__info-grid">
+                <div class="about__info-item">
+                    <div class="about__info-label">Name</div>
+                    <div class="about__info-value">{{ .Name }}</div>
+                </div>
+                <div class="about__info-item">
+                    <div class="about__info-label">Nationality</div>
+                    <div class="about__info-value">{{ .Nationality }}</div>
+                </div>
+                <div class="about__info-item">
+                    <div class="about__info-label">GitHub</div>
+                    <div class="about__info-value"><a href="https://{{ .Github }}" target="_blank">{{ .Github }}</a></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Professional Objectives -->
+    <div class="objectives-card reveal reveal-delay-2">
+        <p>As an active element in the society, I want to help in the development for emerging technologies and automation processes. Being part of an organization that shares my ideals to get people closer and help in the progress of human race.</p>
+    </div>
+</div>

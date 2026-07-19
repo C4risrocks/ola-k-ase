@@ -1,0 +1,104 @@
+<div class="container">
+    <div class="section__header reveal">
+        <span class="section__label">Say Hello</span>
+        <h2 class="section__title">Get In Touch</h2>
+        <p class="section__subtitle">Have a project in mind or just want to connect? I'd love to hear from you</p>
+    </div>
+
+    <div class="contact__grid">
+        <!-- Contact Info -->
+        <div class="contact__info reveal">
+            <p class="contact__info-text">
+                I'm always interested in hearing about new opportunities, collaboration ideas, 
+                or just having a good conversation about technology and networking. 
+                Feel free to reach out through any of the channels below.
+            </p>
+
+            <div class="contact__links">
+                <a href="https://www.github.com/C4risrocks" target="_blank" rel="noopener" class="contact__link">
+                    <div class="contact__link-icon">⌨️</div>
+                    <div>
+                        <div class="contact__link-label">GitHub</div>
+                        <div class="contact__link-value">C4risrocks</div>
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        <!-- Contact Form -->
+        <div class="reveal reveal-delay-1">
+            <form class="contact__form"
+                  x-data="{
+                      name: '',
+                      email: '',
+                      message: '',
+                      errors: {},
+                      submitted: false,
+                      validate() {
+                          this.errors = {};
+                          if (!this.name.trim()) this.errors.name = 'Name is required';
+                          if (!this.email.trim()) this.errors.email = 'Email is required';
+                          else if (!this.email.includes('@')) this.errors.email = 'Please enter a valid email';
+                          if (!this.message.trim()) this.errors.message = 'Message is required';
+                          return Object.keys(this.errors).length === 0;
+                      },
+                      get isValid() {
+                          return this.name.trim() && this.email.includes('@') && this.message.trim();
+                      }
+                  }"
+                  hx-post="/api/contact"
+                  hx-target="#contact-response"
+                  hx-swap="innerHTML"
+                  @htmx:after-request="if(event.detail.successful) { name=''; email=''; message=''; submitted=true; }">
+
+                <div id="contact-response"></div>
+
+                <div class="form__group">
+                    <label for="contact-name" class="form__label">Full Name</label>
+                    <input type="text" 
+                           id="contact-name" 
+                           name="name" 
+                           x-model="name"
+                           class="form__input" 
+                           :class="{ 'error': errors.name }"
+                           placeholder="Your name"
+                           required>
+                    <p class="form__error" x-show="errors.name" x-text="errors.name"></p>
+                </div>
+
+                <div class="form__group">
+                    <label for="contact-email" class="form__label">Email Address</label>
+                    <input type="email" 
+                           id="contact-email" 
+                           name="email" 
+                           x-model="email"
+                           class="form__input" 
+                           :class="{ 'error': errors.email }"
+                           placeholder="your@email.com"
+                           required>
+                    <p class="form__error" x-show="errors.email" x-text="errors.email"></p>
+                </div>
+
+                <div class="form__group">
+                    <label for="contact-message" class="form__label">Message</label>
+                    <textarea id="contact-message" 
+                              name="message" 
+                              x-model="message"
+                              class="form__textarea" 
+                              :class="{ 'error': errors.message }"
+                              placeholder="Tell me about your project or idea..."
+                              rows="5"
+                              required></textarea>
+                    <p class="form__error" x-show="errors.message" x-text="errors.message"></p>
+                </div>
+
+                <button type="submit" 
+                        class="form__submit" 
+                        :disabled="!isValid"
+                        @click="validate()">
+                    Send Message ✨
+                </button>
+            </form>
+        </div>
+    </div>
+</div>

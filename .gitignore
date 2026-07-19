@@ -1,0 +1,18 @@
+# Binaries
+portfolio
+
+# SQLite databases
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# OS files
+.DS_Store
+
+# Personal documents
+/CV\ Christian\ Moreno.pdf
+
+# Go files
+*.log
+go.work
