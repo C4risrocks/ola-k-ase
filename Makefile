@@ -8,7 +8,7 @@ LDFLAGS = -w -s -X main.Version=$(VERSION) -X main.Commit=$(COMMIT) -X main.Buil
 
 run:
 	@echo "Starting development server..."
-	APP_ENV=development LOG_LEVEL=debug go run -ldflags="$(LDFLAGS)" .
+	DATABASE_PATH=./data/site.db APP_ENV=development LOG_LEVEL=debug go run -ldflags="$(LDFLAGS)" .
 
 build:
 	@echo "Building binary..."
