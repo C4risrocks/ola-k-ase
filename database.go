@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -57,14 +59,28 @@ type ContactMessage struct {
 }
 
 func initDB(dataSourceName string) (*sql.DB, error) {
+	// Ensure the directory exists
+	dir := filepath.Dir(dataSourceName)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("create data directory: %w", err)
+	}
+
 	db, err := sql.Open("sqlite3", dataSourceName)
 	if err != nil {
 		return nil, err
 	}
 
-	if _, err := db.Exec(`PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;`); err != nil {
+	// High-performance PRAGMAs for production SQLite
+	pragmas := `
+	PRAGMA journal_mode = WAL;
+	PRAGMA synchronous = NORMAL;
+	PRAGMA foreign_keys = ON;
+	PRAGMA busy_timeout = 5000;
+	PRAGMA temp_store = MEMORY;
+	`
+	if _, err := db.Exec(pragmas); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("configure sqlite: %w", err)
+		return nil, fmt.Errorf("configure sqlite pragmas: %w", err)
 	}
 
 	createTables := `
@@ -230,6 +246,7 @@ func seedData(db *sql.DB) error {
 	return nil
 }
 
+// Data access functions
 func getProfile(db *sql.DB) (Profile, error) {
 	var p Profile
 	err := db.QueryRow("SELECT name, title, email, phone, github, nationality, about_text FROM profile LIMIT 1").
@@ -252,10 +269,7 @@ func getSkills(db *sql.DB) ([]Skill, error) {
 		}
 		skills = append(skills, s)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return skills, nil
+	return skills, rows.Err()
 }
 
 func getExperience(db *sql.DB) ([]Experience, error) {
@@ -277,10 +291,7 @@ func getExperience(db *sql.DB) ([]Experience, error) {
 		}
 		exps = append(exps, e)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return exps, nil
+	return exps, rows.Err()
 }
 
 func getEducation(db *sql.DB) ([]Education, error) {
@@ -298,10 +309,7 @@ func getEducation(db *sql.DB) ([]Education, error) {
 		}
 		edus = append(edus, e)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return edus, nil
+	return edus, rows.Err()
 }
 
 func getCourses(db *sql.DB) ([]Course, error) {
@@ -319,10 +327,7 @@ func getCourses(db *sql.DB) ([]Course, error) {
 		}
 		courses = append(courses, c)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return courses, nil
+	return courses, rows.Err()
 }
 
 func insertContactMessage(db *sql.DB, name, email, message string) error {

@@ -1,42 +1,60 @@
-# Build stage
-FROM golang:alpine AS builder
+# syntax=docker/dockerfile:1.4
+FROM golang:1.23-bookworm AS builder
 
-# Install build dependencies for cgo (SQLite needs it)
-RUN apk add --no-cache build-base
+RUN apt-get update && apt-get install -y gcc g++ make libc6-dev && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy dependency files
+# Cache go modules
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 
-# Copy source code
+# Copy everything else
 COPY . .
 
-# Build the binary
-RUN CGO_ENABLED=1 GOOS=linux go build -o portfolio .
+ARG VERSION="dev"
+ARG COMMIT="none"
+ARG BUILD_DATE="unknown"
 
-# Final stage
-FROM alpine:latest
+# Build with CGO enabled (mattn/go-sqlite3 requirement)
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=1 GOOS=linux go build \
+    -ldflags="-w -s -X main.Version=${VERSION} -X main.Commit=${COMMIT} -X main.BuildDate=${BUILD_DATE}" \
+    -o portfolio .
 
-# Install dependencies (ca-certificates, tzdata)
-RUN apk --no-cache add ca-certificates tzdata
+# Final lightweight image
+FROM debian:bookworm-slim
+
+# OCI Labels
+LABEL org.opencontainers.image.title="CM Portfolio"
+LABEL org.opencontainers.image.source="https://github.com/C4risrocks/ola-k-ase"
+
+RUN apt-get update && apt-get install -y ca-certificates wget && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user and prep /data volume
+RUN useradd -u 10001 appuser && \
+    mkdir -p /data && \
+    chown -R appuser:appuser /data
 
 WORKDIR /app
 
-# Copy binary and assets
-COPY --from=builder /app/portfolio .
-COPY --from=builder /app/static ./static
-COPY --from=builder /app/templates ./templates
+COPY --from=builder /app/portfolio /app/portfolio
 
-# Create directory for SQLite persistent database
-RUN mkdir -p /app/data
+# Ensure the binary is executable and owned by appuser
+RUN chown appuser:appuser /app/portfolio && chmod +x /app/portfolio
 
-# Expose default port
-EXPOSE 8080
+USER appuser
 
-# Defaults
 ENV PORT=8080
-ENV DB_PATH=/app/data/portfolio.db
+ENV DATABASE_PATH=/data/site.db
+ENV APP_ENV=production
+ENV LOG_LEVEL=info
 
-CMD ["./portfolio"]
+EXPOSE ${PORT}
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:${PORT}/health || exit 1
+
+ENTRYPOINT ["/app/portfolio"]

@@ -2,19 +2,31 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
+	"embed"
+	"encoding/json"
 	"fmt"
 	"html/template"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/mail"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 )
 
+//go:embed templates/* templates/partials/*
+var templateFS embed.FS
+
+//go:embed static/*
+var staticFS embed.FS
+
 var db *sql.DB
 var templates *template.Template
+var appConfig Config
 
 const (
 	maxContactBodyBytes  = 16 << 10
@@ -23,48 +35,109 @@ const (
 	maxContactMessageLen = 4000
 )
 
+func initLogger(env string, level string) {
+	var lvl slog.Level
+	switch level {
+	case "debug":
+		lvl = slog.LevelDebug
+	case "warn":
+		lvl = slog.LevelWarn
+	case "error":
+		lvl = slog.LevelError
+	default:
+		lvl = slog.LevelInfo
+	}
+
+	opts := &slog.HandlerOptions{Level: lvl}
+	var handler slog.Handler
+
+	if env == "production" {
+		handler = slog.NewJSONHandler(os.Stdout, opts)
+	} else {
+		handler = slog.NewTextHandler(os.Stdout, opts)
+	}
+	slog.SetDefault(slog.New(handler))
+}
+
 func main() {
+	appConfig = LoadConfig()
+	initLogger(appConfig.AppEnv, appConfig.LogLevel)
+
+	slog.Info("starting application",
+		slog.String("version", Version),
+		slog.String("commit", Commit),
+		slog.String("env", appConfig.AppEnv))
+
 	var err error
-	dbPath := os.Getenv("DB_PATH")
-	if dbPath == "" {
-		dbPath = "portfolio.db"
-	}
-
-	db, err = initDB(dbPath)
+	db, err = initDB(appConfig.DatabasePath)
 	if err != nil {
-		log.Fatal(err)
+		slog.Error("failed to initialize database", slog.Any("error", err))
+		os.Exit(1)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			slog.Error("error closing database", slog.Any("error", err))
+		}
+	}()
 
-	// Parse templates
-	templates = template.Must(template.ParseGlob("templates/*.html"))
-	template.Must(templates.ParseGlob("templates/partials/*.html"))
-
-	// Serve static files
-	fs := http.FileServer(http.Dir("static"))
-	http.Handle("/static/", http.StripPrefix("/static/", fs))
-
-	// Routes
-	http.HandleFunc("/", indexHandler)
-	http.HandleFunc("/api/section/", sectionHandler)
-	http.HandleFunc("/api/contact", contactHandler)
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	// Parse templates from embed.FS
+	templates, err = template.ParseFS(templateFS, "templates/*.html", "templates/partials/*.html")
+	if err != nil {
+		slog.Error("failed to parse templates", slog.Any("error", err))
+		os.Exit(1)
 	}
+
+	mux := http.NewServeMux()
+
+	// Serve static files from embed.FS
+	// staticFS root is the project root, so staticFS.Open("static/...") matches URL path
+	mux.Handle("/static/", cacheMiddleware(http.FileServer(http.FS(staticFS))))
+
+	// Application routes
+	mux.Handle("/", cacheMiddleware(http.HandlerFunc(indexHandler)))
+	mux.Handle("/api/section/", cacheMiddleware(http.HandlerFunc(sectionHandler)))
+	mux.Handle("/api/contact", http.HandlerFunc(contactHandler))
+
+	// Operational endpoints
+	mux.Handle("/metrics", metricsHandler())
+	mux.HandleFunc("/health", healthHandler)
+	mux.HandleFunc("/ready", readyHandler)
+	mux.HandleFunc("/version", versionHandler)
+
+	// Wrap mux with global middleware
+	handler := standardMiddleware(mux)
 
 	srv := &http.Server{
-		Addr:              ":" + port,
-		Handler:           nil,
+		Addr:              ":" + appConfig.Port,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
 		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MB
 	}
 
-	log.Printf("Portfolio server running at http://localhost:%s", port)
-	log.Fatal(srv.ListenAndServe())
+	// Graceful Shutdown
+	go func() {
+		slog.Info("server listening", slog.String("port", appConfig.Port))
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("listen error", slog.Any("error", err))
+			os.Exit(1)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	slog.Info("shutting down server gracefully...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		slog.Error("server forced to shutdown", slog.Any("error", err))
+	}
+	slog.Info("server exited cleanly")
 }
 
 func indexHandler(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +148,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 
 	profile, err := getProfile(db)
 	if err != nil && err != sql.ErrNoRows {
-		log.Println("DB error:", err)
+		slog.Error("db error", slog.Any("error", err))
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -128,7 +201,7 @@ func sectionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		log.Println("DB error:", err)
+		slog.Error("db error", slog.Any("error", err))
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -158,7 +231,7 @@ func contactHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := insertContactMessage(db, name, email, message); err != nil {
-		log.Println("DB error:", err)
+		slog.Error("db error", slog.Any("error", err))
 		writeContactAlert(w, http.StatusInternalServerError, "error", "ph-warning", "An error occurred. Please try again later.")
 		return
 	}
@@ -195,11 +268,36 @@ func writeContactAlert(w http.ResponseWriter, status int, kind, icon, message st
 func renderTemplate(w http.ResponseWriter, name string, data interface{}) {
 	var buf bytes.Buffer
 	if err := templates.ExecuteTemplate(&buf, name, data); err != nil {
-		log.Println("Template error:", err)
+		slog.Error("template error", slog.Any("error", err))
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = buf.WriteTo(w)
+}
+
+// Health, Ready & Version Endpoints
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("OK"))
+}
+
+func readyHandler(w http.ResponseWriter, r *http.Request) {
+	if err := db.Ping(); err != nil {
+		slog.Error("db ping failed", slog.Any("error", err))
+		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("Ready"))
+}
+
+func versionHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"version":    Version,
+		"commit":     Commit,
+		"build_date": BuildDate,
+	})
 }

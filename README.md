@@ -1,78 +1,61 @@
-# Christian Moreno - Portfolio
+# cmoreno.org - Portfolio Architecture
 
-A brutally elegant, Web3-inspired personal portfolio designed for impact. Featuring a dynamic theme-switching background, huge editorial typography, and an extreme tech-brutalist wireframe aesthetic.
+Plataforma de portafolio personal diseñada con una estética **Tech-Brutalista** y una arquitectura ultra-optimizada para despliegues en producción usando **Coolify** y **Traefik**.
 
-## 🚀 Tech Stack
+## 🏗 Arquitectura del Sistema
 
-- **Backend:** [Go (Golang)](https://go.dev/) - Blazing fast standard `net/http` server
-- **Database:** [SQLite](https://sqlite.org/index.html) - Embedded local database (`portfolio.db`) storing profile, experience, and skills
-- **Frontend Interactivity:** [HTMX](https://htmx.org/) - Loading sections and sending contact forms dynamically without heavy JS frameworks
-- **Frontend Logic:** [Alpine.js](https://alpinejs.dev/) - Intersection observers and lightweight state management
-- **Design System:** Custom CSS using CSS variables, brutalist grids, and dynamic scrolling themes
+La aplicación utiliza el stack **GOTH** (Go, SQLite, HTMX):
+- **Go 1.23+**: Backend de alto rendimiento con enrutamiento nativo y concurrencia segura.
+- **SQLite (WAL mode)**: Base de datos embebida ultra-rápida operando como única fuente de verdad.
+- **HTMX & Alpine.js**: Frontend reactivo hiperligero, SSR (Server-Side Rendered), sin frameworks SPA pesados.
 
-## 📸 Previews
+### Decisiones Críticas
+- **Stateless (Excepto DB):** El binario compila el frontend usando `//go:embed`. El único directorio que requiere persistencia (y backup) es `/data`.
+- **Graceful Shutdown:** La aplicación captura `SIGTERM` y cierra la base de datos limpiamente antes de apagar el servidor, evitando corrupción en despliegues automatizados de Coolify.
+- **Seguridad Integrada:** Middleware con `Content-Security-Policy` estricto, `Permissions-Policy`, y estrategias asimétricas de caché (Etag + Immutable en estáticos; No-cache en HTML).
 
-### Hero Section (Dark Theme)
-![Hero](static/img/screenshot-1-hero.png)
+## 🚀 Despliegue en Coolify
 
-### About Section (White Theme)
-![About](static/img/screenshot-2-about.png)
+Este repositorio está preparado para funcionar como un **Servicio Docker** directamente en Coolify.
 
-### Skills Section (Electric Blue Theme)
-![Skills](static/img/screenshot-3-skills.png)
+### Configuración en Coolify
+1. **Tipo de Build:** Selecciona **Dockerfile** (NO uses Nixpacks para no inflar la imagen).
+2. **Volumen Persistente:** En la pestaña *Storage*, mapea un volumen local al directorio `/data` del contenedor. **(⚠️ ESTE ES EL ÚNICO DIRECTORIO QUE REQUIERE BACKUP ⚠️)**
+3. **Red:** La aplicación respetará automáticamente los proxies inversos como Traefik leyendo el puerto dinámico de la variable `PORT` (por defecto 8080).
 
-## 🛠 Features
+### Variables de Entorno Recomendadas
 
-- **Dynamic Theme Transitions:** As you scroll through the page, Alpine.js's IntersectionObserver detects the current section and smoothly transitions the entire page's background and accent colors between Black, White, and Electric Blue.
-- **Server-Side Rendered Partials:** Uses HTMX to lazy-load the `About`, `Skills`, `Experience`, `Education`, and `Contact` sections directly from the Go server on scroll.
-- **Anti-Slop Design:** Stripped of standard SaaS clichés (no rounded corners, no soft shadows, no gradients). Uses stark 1px solid borders, monospaced tech metadata (`Space Mono`), and massive editorial display typography (`Instrument Serif`).
-- **Contact Form Validation:** Fully functional contact form with Alpine.js frontend validation and Go backend verification (persisted to SQLite).
+| Variable | Descripción | Valor Recomendado en Prod |
+|----------|-------------|---------------------------|
+| `PORT` | Puerto de escucha HTTP | *(Dinámico por Coolify)* |
+| `DATABASE_PATH` | Ruta del archivo SQLite | `/data/site.db` |
+| `APP_ENV` | Entorno de ejecución | `production` (activa logs JSON) |
+| `LOG_LEVEL` | Nivel de logs | `info` o `warn` |
 
-## 💻 How to Run Locally
+## 💻 Entorno de Desarrollo Local
 
-### Prerequisites
-- [Go](https://go.dev/doc/install) (1.20+ recommended)
+Para garantizar la paridad exacta entre tu entorno local y el servidor, utilizamos `compose.dev.yaml`.
 
-### Installation & Execution
+```bash
+# 1. Crear el volumen local (opcional)
+mkdir -p data
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/C4risrocks/ola-k-ase.git
-   cd ola-k-ase
-   ```
-
-2. **Run the server:**
-   ```bash
-   go run .
-   ```
-   *Note: This command will automatically compile the Go code and parse the templates.*
-
-3. **View the site:**
-   Open your browser and navigate to:
-   [http://localhost:8080](http://localhost:8080)
-
-4. **Running Tests:**
-   Ensure the endpoints and partials are rendering correctly by running the Go tests:
-   ```bash
-   go test ./...
-   ```
-
-## 🏗 Project Structure
-
-```text
-.
-├── database.go           # SQLite database initialization and seeding
-├── main.go               # HTTP server, routing, and HTMX handlers
-├── main_test.go          # Tests for the HTTP handlers
-├── portfolio.db          # Auto-generated SQLite database
-├── static/
-│   ├── css/style.css     # The brutalist design system CSS
-│   └── img/              # Images, avatars, and screenshots
-└── templates/
-    ├── index.html        # Base layout, Nav, Hero, and Alpine.js logic
-    └── partials/         # HTMX-loaded HTML fragments (About, Skills, etc.)
+# 2. Levantar el entorno
+docker compose -f compose.dev.yaml up --build
 ```
+La aplicación estará disponible en `http://localhost:8080` y SQLite persistirá localmente en la carpeta `./data/`.
 
-## 📜 License
+## 🛡 Comandos `make` (Makefile)
 
-MIT License. See `LICENSE` for more information.
+- `make run`: Ejecuta el servidor localmente (sin Docker).
+- `make build`: Construye el binario inyectando los `-ldflags` (Commit, BuildDate, Version).
+- `make test`: Ejecuta toda la suite de pruebas.
+- `make docker`: Construye la imagen Docker manualmente.
+- `make lint`: Ejecuta el linter estático.
+
+## 📊 Endpoints de Observabilidad
+
+- `GET /health`: Revisa que el servidor HTTP esté activo (usado por Docker HEALTHCHECK).
+- `GET /ready`: Hace ping a SQLite para verificar disponibilidad total.
+- `GET /version`: Devuelve un JSON con la versión, commit y fecha de compilación de la imagen en ejecución.
+- `GET /metrics`: Expone métricas estándar de Go compatibles con **Prometheus**.
