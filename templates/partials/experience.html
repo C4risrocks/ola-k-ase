@@ -1,25 +1,27 @@
 <div class="container">
-    <div class="section__header reveal">
-        <span class="section__label">Career</span>
-        <h2 class="section__title">Professional Experience</h2>
-        <p class="section__subtitle">Building expertise through hands-on work in networking, development, and security</p>
-    </div>
+    <span class="section__chapter">03</span>
+    <h2 class="text-xl uppercase">Experience</h2>
+    <p class="hero__sub" style="margin-bottom: var(--space-xl);">Building expertise through hands-on work in networking, development, and security.</p>
 
-    <div class="timeline stagger-children">
+    <div style="border-top: 1px solid var(--clr-border);">
         {{ range . }}
-        <div class="timeline__item">
-            <div class="timeline__dot"></div>
-            <div class="timeline__card">
-                <span class="timeline__date">📅 {{ .DateRange }}</span>
-                <h3 class="timeline__title">{{ .Title }}</h3>
-                <p class="timeline__org">{{ .Organization }}</p>
-                <p class="timeline__desc">{{ .Description }}</p>
+        <div class="row-item">
+            <div class="row-item__meta text-mono-sm">
+                {{ .DateRange }}<br>
+                <span class="text-accent">{{ .Organization }}</span>
+            </div>
+            <div>
+                <h3 class="font-display" style="font-size: 2rem; margin-bottom: var(--space-sm);">{{ .Title }}</h3>
+                <p style="margin-bottom: var(--space-md);">{{ .Description }}</p>
                 {{ if .Details }}
-                <ul class="timeline__details">
+                <div style="display: flex; flex-direction: column; gap: var(--space-xs);">
                     {{ range .Details }}
-                    <li class="timeline__detail">{{ . }}</li>
+                    <div style="display: flex; gap: var(--space-sm);">
+                        <span style="color: var(--clr-accent);">*</span>
+                        <span>{{ . }}</span>
+                    </div>
                     {{ end }}
-                </ul>
+                </div>
                 {{ end }}
             </div>
         </div>

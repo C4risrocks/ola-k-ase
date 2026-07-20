@@ -1,27 +1,19 @@
 <div class="container">
-    <div class="section__header reveal">
-        <span class="section__label">Expertise</span>
-        <h2 class="section__title">Technical Skills</h2>
-        <p class="section__subtitle">A broad range of technical competencies across networking, security, and software development</p>
-    </div>
+    <span class="section__chapter">02</span>
+    <h2 class="text-xl uppercase">Technical Skills</h2>
+    <p class="hero__sub" style="margin-bottom: var(--space-xl);">A broad range of technical competencies across networking, security, and software development.</p>
 
-    <div class="skills__grid stagger-children">
+    <div class="grid-border">
         {{ range . }}
-        <div class="skill-card">
-            <div class="skill-card__icon">
-                {{ if eq .Category "Switching" }}🔀{{ end }}
-                {{ if eq .Category "Routing" }}🛤️{{ end }}
-                {{ if eq .Category "Security" }}🔒{{ end }}
-                {{ if eq .Category "WAN" }}🌐{{ end }}
-                {{ if eq .Category "Programming" }}💻{{ end }}
-                {{ if eq .Category "Hardware Description" }}🔧{{ end }}
-                {{ if eq .Category "Operating Systems" }}🖥️{{ end }}
-                {{ if eq .Category "Software & Tools" }}⚙️{{ end }}
-            </div>
-            <h3 class="skill-card__title">{{ .Category }}</h3>
-            <div class="skill-card__tags" x-data="{ items: '{{ .Items }}'.split(', ') }">
+        <div>
+            <div class="text-mono-sm text-accent" style="margin-bottom: var(--space-md);">[ {{ .Category }} ]</div>
+            
+            <div style="display: flex; flex-direction: column; gap: var(--space-xs);" x-data="{ items: '{{ .Items }}'.split(', ') }">
                 <template x-for="item in items" :key="item">
-                    <span class="skill-tag" x-text="item"></span>
+                    <div style="display: flex; align-items: center; gap: var(--space-sm);">
+                        <span style="color: var(--clr-border);">—</span>
+                        <span class="text-mono-sm" x-text="item"></span>
+                    </div>
                 </template>
             </div>
         </div>

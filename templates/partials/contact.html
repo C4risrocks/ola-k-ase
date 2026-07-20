@@ -1,33 +1,27 @@
 <div class="container">
-    <div class="section__header reveal">
-        <span class="section__label">Say Hello</span>
-        <h2 class="section__title">Get In Touch</h2>
-        <p class="section__subtitle">Have a project in mind or just want to connect? I'd love to hear from you</p>
-    </div>
+    <span class="section__chapter">05</span>
+    <h2 class="text-xl uppercase">Contact</h2>
 
-    <div class="contact__grid">
+    <div class="grid-50-50" style="margin-top: var(--space-xl);">
         <!-- Contact Info -->
-        <div class="contact__info reveal">
-            <p class="contact__info-text">
+        <div>
+            <div class="text-mono-sm text-accent" style="margin-bottom: var(--space-md);">[ LET'S CONNECT ]</div>
+            <p style="margin-bottom: var(--space-lg);">
                 I'm always interested in hearing about new opportunities, collaboration ideas, 
                 or just having a good conversation about technology and networking. 
-                Feel free to reach out through any of the channels below.
             </p>
 
-            <div class="contact__links">
-                <a href="https://www.github.com/C4risrocks" target="_blank" rel="noopener" class="contact__link">
-                    <div class="contact__link-icon">⌨️</div>
-                    <div>
-                        <div class="contact__link-label">GitHub</div>
-                        <div class="contact__link-value">C4risrocks</div>
-                    </div>
-                </a>
+            <div style="border-top: 1px solid var(--clr-border);">
+                <div style="display: flex; justify-content: space-between; border-bottom: 1px solid var(--clr-border); padding: var(--space-sm) 0;">
+                    <span class="text-mono-sm text-muted">GITHUB</span>
+                    <span class="text-mono-sm"><a href="https://www.github.com/C4risrocks" target="_blank" rel="noopener">C4risrocks</a></span>
+                </div>
             </div>
         </div>
 
         <!-- Contact Form -->
-        <div class="reveal reveal-delay-1">
-            <form class="contact__form"
+        <div>
+            <form style="display: flex; flex-direction: column; gap: var(--space-md);"
                   x-data="{
                       name: '',
                       email: '',
@@ -38,7 +32,7 @@
                           this.errors = {};
                           if (!this.name.trim()) this.errors.name = 'Name is required';
                           if (!this.email.trim()) this.errors.email = 'Email is required';
-                          else if (!this.email.includes('@')) this.errors.email = 'Please enter a valid email';
+                          else if (!this.email.includes('@')) this.errors.email = 'Valid email is required';
                           if (!this.message.trim()) this.errors.message = 'Message is required';
                           return Object.keys(this.errors).length === 0;
                       },
@@ -51,53 +45,52 @@
                   hx-swap="innerHTML"
                   @htmx:after-request="if(event.detail.successful) { name=''; email=''; message=''; submitted=true; }">
 
-                <div id="contact-response"></div>
+                <div id="contact-response" role="status" aria-live="polite"></div>
 
-                <div class="form__group">
-                    <label for="contact-name" class="form__label">Full Name</label>
+                <div style="display: flex; flex-direction: column; border-bottom: 1px solid var(--clr-border); padding-bottom: var(--space-xs);">
+                    <label for="contact-name" class="text-mono-sm text-muted">FULL NAME</label>
                     <input type="text" 
                            id="contact-name" 
                            name="name" 
                            x-model="name"
-                           class="form__input" 
-                           :class="{ 'error': errors.name }"
-                           placeholder="Your name"
+                           style="background: transparent; border: none; color: var(--clr-text); font-family: var(--font-display); font-size: 1.5rem; outline: none; margin-top: var(--space-xs);"
+                           placeholder="..."
                            required>
-                    <p class="form__error" x-show="errors.name" x-text="errors.name"></p>
+                    <span class="text-mono-sm text-accent" x-show="errors.name" x-text="errors.name"></span>
                 </div>
 
-                <div class="form__group">
-                    <label for="contact-email" class="form__label">Email Address</label>
+                <div style="display: flex; flex-direction: column; border-bottom: 1px solid var(--clr-border); padding-bottom: var(--space-xs);">
+                    <label for="contact-email" class="text-mono-sm text-muted">EMAIL</label>
                     <input type="email" 
                            id="contact-email" 
                            name="email" 
                            x-model="email"
-                           class="form__input" 
-                           :class="{ 'error': errors.email }"
-                           placeholder="your@email.com"
+                           style="background: transparent; border: none; color: var(--clr-text); font-family: var(--font-display); font-size: 1.5rem; outline: none; margin-top: var(--space-xs);"
+                           placeholder="..."
                            required>
-                    <p class="form__error" x-show="errors.email" x-text="errors.email"></p>
+                    <span class="text-mono-sm text-accent" x-show="errors.email" x-text="errors.email"></span>
                 </div>
 
-                <div class="form__group">
-                    <label for="contact-message" class="form__label">Message</label>
+                <div style="display: flex; flex-direction: column; border-bottom: 1px solid var(--clr-border); padding-bottom: var(--space-xs);">
+                    <label for="contact-message" class="text-mono-sm text-muted">MESSAGE</label>
                     <textarea id="contact-message" 
                               name="message" 
                               x-model="message"
-                              class="form__textarea" 
-                              :class="{ 'error': errors.message }"
-                              placeholder="Tell me about your project or idea..."
-                              rows="5"
+                              style="background: transparent; border: none; color: var(--clr-text); font-family: var(--font-display); font-size: 1.5rem; outline: none; margin-top: var(--space-xs); resize: vertical;"
+                              placeholder="..."
+                              rows="3"
                               required></textarea>
-                    <p class="form__error" x-show="errors.message" x-text="errors.message"></p>
+                    <span class="text-mono-sm text-accent" x-show="errors.message" x-text="errors.message"></span>
                 </div>
 
-                <button type="submit" 
-                        class="form__submit" 
-                        :disabled="!isValid"
-                        @click="validate()">
-                    Send Message ✨
-                </button>
+                <div style="margin-top: var(--space-sm);">
+                    <button type="submit" 
+                            class="btn" 
+                            :disabled="!isValid"
+                            @click="validate()">
+                        Send Message
+                    </button>
+                </div>
             </form>
         </div>
     </div>

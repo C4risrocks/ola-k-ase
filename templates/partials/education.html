@@ -1,54 +1,51 @@
 <div class="container">
-    <div class="section__header reveal">
-        <span class="section__label">Learning</span>
-        <h2 class="section__title">Education & Certifications</h2>
-        <p class="section__subtitle">Continuous learning through academic excellence and professional certifications</p>
-    </div>
-
-    <div class="edu__grid">
+    <span class="section__chapter">04</span>
+    <h2 class="text-xl uppercase">Education</h2>
+    
+    <div class="grid-50-50" style="margin-top: var(--space-xl);">
         <!-- Academic Education -->
-        <div class="reveal">
-            <h3 class="edu__block-title">
-                <span class="edu__block-icon">🎓</span> Academic Education
-            </h3>
-            {{ range .Education }}
-            <div class="edu-card">
-                <h4 class="edu-card__title">{{ .Degree }}</h4>
-                <p class="edu-card__institution">{{ .Institution }}</p>
-                {{ if .DateRange }}
-                <span class="edu-card__date">📅 {{ .DateRange }}</span>
+        <div>
+            <div class="text-mono-sm text-accent" style="margin-bottom: var(--space-lg);">[ ACADEMIC EDUCATION ]</div>
+            <div style="border-top: 1px solid var(--clr-border);">
+                {{ range .Education }}
+                <div style="padding: var(--space-md) 0; border-bottom: 1px solid var(--clr-border);">
+                    <h4 class="font-display" style="font-size: 1.5rem; margin-bottom: var(--space-xs);">{{ .Degree }}</h4>
+                    <p class="text-mono-sm text-muted">{{ .Institution }}</p>
+                    {{ if .DateRange }}
+                    <p class="text-mono-sm" style="margin-top: var(--space-xs);">{{ .DateRange }}</p>
+                    {{ end }}
+                </div>
                 {{ end }}
-            </div>
-            {{ end }}
-
-            <!-- Languages Card -->
-            <div class="languages-card">
-                <h4 class="languages-card__title">🗣️ Languages</h4>
-                <div class="languages-card__list">
-                    <div class="languages-card__item">
-                        <span>🇲🇽 Spanish</span>
-                        <span class="languages-card__level">— Native</span>
-                    </div>
-                    <div class="languages-card__item">
-                        <span>🇺🇸 English</span>
-                        <span class="languages-card__level">— Fluent</span>
+                
+                <!-- Languages -->
+                <div style="padding: var(--space-md) 0; border-bottom: 1px solid var(--clr-border);">
+                    <h4 class="font-display" style="font-size: 1.5rem; margin-bottom: var(--space-xs);">Languages</h4>
+                    <div style="display: flex; flex-direction: column; gap: var(--space-xs); margin-top: var(--space-xs);">
+                        <div style="display: flex; justify-content: space-between;">
+                            <span class="text-mono-sm text-muted">SPANISH</span>
+                            <span class="text-mono-sm">NATIVE</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between;">
+                            <span class="text-mono-sm text-muted">ENGLISH</span>
+                            <span class="text-mono-sm">FLUENT</span>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
 
         <!-- Courses & Certifications -->
-        <div class="reveal reveal-delay-1">
-            <h3 class="edu__block-title">
-                <span class="edu__block-icon">📜</span> Courses & Certifications
-            </h3>
-            {{ range .Courses }}
-            <div class="edu-card">
-                <h4 class="edu-card__title">{{ .Name }}</h4>
-                <p class="edu-card__institution">{{ .Institution }}</p>
-                <span class="edu-card__date">📅 {{ .DateRange }}</span>
+        <div>
+            <div class="text-mono-sm text-accent" style="margin-bottom: var(--space-lg);">[ CERTIFICATIONS ]</div>
+            <div style="border-top: 1px solid var(--clr-border);">
+                {{ range .Courses }}
+                <div style="padding: var(--space-md) 0; border-bottom: 1px solid var(--clr-border);">
+                    <h4 class="font-display" style="font-size: 1.5rem; margin-bottom: var(--space-xs);">{{ .Name }}</h4>
+                    <p class="text-mono-sm text-muted">{{ .Institution }}</p>
+                    <p class="text-mono-sm" style="margin-top: var(--space-xs);">{{ .DateRange }}</p>
+                </div>
+                {{ end }}
             </div>
-            {{ end }}
         </div>
     </div>
 </div>

@@ -1,17 +1,18 @@
 <!DOCTYPE html>
-<html lang="en" x-data="portfolio()" :data-theme="darkMode ? 'dark' : 'light'">
+<html lang="en" x-data="portfolio()" data-bg="black">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ .Profile.Name }} — {{ .Profile.Title }}</title>
+    <title>{{ .Profile.Name }} - {{ .Profile.Title }}</title>
     <meta name="description" content="Portfolio of {{ .Profile.Name }}, {{ .Profile.Title }}. Technology enthusiast with passion for networking, security, and software development.">
     <meta name="author" content="{{ .Profile.Name }}">
 
     <!-- Favicon -->
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='0' fill='%230a0a0c'/><text x='50' y='66' text-anchor='middle' font-family='monospace' font-size='42' font-weight='700' fill='%230044ff'>CM</text></svg>">
 
     <!-- Styles -->
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v=3.0">
 
     <!-- HTMX -->
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
@@ -20,17 +21,13 @@
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
 </head>
 <body>
-    <!-- Ambient Background Orbs -->
-    <div class="ambient-orb ambient-orb--1" aria-hidden="true"></div>
-    <div class="ambient-orb ambient-orb--2" aria-hidden="true"></div>
-    <div class="ambient-orb ambient-orb--3" aria-hidden="true"></div>
+    <div id="scroll-sentinel" aria-hidden="true"></div>
 
     <!-- Navigation -->
     <nav class="nav" :class="{ 'scrolled': scrolled }" id="main-nav">
         <div class="nav__inner">
-            <a href="#" class="nav__logo">
-                <span class="nav__logo-icon">CM</span>
-                <span>Christian<span class="text-gradient">.</span></span>
+            <a href="#" class="nav__logo text-accent">
+                CM
             </a>
 
             <div class="nav__links" :class="{ 'open': mobileMenuOpen }">
@@ -40,138 +37,105 @@
                 <a href="#education" class="nav__link" @click="mobileMenuOpen = false">Education</a>
                 <a href="#contact" class="nav__link" @click="mobileMenuOpen = false">Contact</a>
             </div>
-
-            <div class="nav__actions">
-                <button class="theme-toggle" @click="toggleDarkMode()" :aria-label="darkMode ? 'Switch to light mode' : 'Switch to dark mode'">
-                    <span x-show="!darkMode">🌙</span>
-                    <span x-show="darkMode">☀️</span>
-                </button>
-                <button class="nav__burger" @click="mobileMenuOpen = !mobileMenuOpen" :aria-label="mobileMenuOpen ? 'Close menu' : 'Open menu'">
-                    <span x-show="!mobileMenuOpen">☰</span>
-                    <span x-show="mobileMenuOpen">✕</span>
+            
+            <!-- Mobile Menu Toggle -->
+            <div class="nav__actions" style="display: none;">
+                <button class="nav__burger text-mono-sm" @click="mobileMenuOpen = !mobileMenuOpen" aria-label="Toggle menu">
+                    <span x-text="mobileMenuOpen ? '[ CLOSE ]' : '[ MENU ]'"></span>
                 </button>
             </div>
         </div>
     </nav>
 
     <!-- Hero Section -->
-    <section class="hero" id="hero">
+    <section class="hero" id="hero" data-theme-color="black">
         <div class="hero__content">
-            <div class="hero__badge">
-                <span class="hero__badge-dot"></span>
-                Open to opportunities
+            <div class="hero__eyebrow text-mono-sm">
+                HELLO, I'M
             </div>
-            <p class="hero__greeting">Hello, I'm</p>
-            <h1 class="hero__name">
-                <span class="hero__name-gradient">{{ .Profile.Name }}</span>
+            <h1 class="hero__name text-huge">
+                {{ .Profile.Name }}
             </h1>
-            <p class="hero__title">
-                {{ .Profile.Title }} at <strong>UNAM</strong> · Networking & Security Enthusiast · Full-Stack Developer
+            <p class="hero__sub">
+                {{ .Profile.Title }} at <span class="text-accent">UNAM</span>. Networking & Security Enthusiast. Full-Stack Developer shaping the future of code.
             </p>
-            <div class="hero__actions">
-                <a href="#contact" class="btn btn--primary">
-                    ✉️ Get In Touch
+            <div class="hero__actions" style="margin-top: var(--space-lg); display: flex; gap: var(--space-md);">
+                <a href="#contact" class="btn">
+                    CONTACT
                 </a>
-                <a href="https://{{ .Profile.Github }}" target="_blank" rel="noopener" class="btn btn--secondary">
-                    ⌨️ GitHub Profile
+                <a href="https://{{ .Profile.Github }}" target="_blank" rel="noopener" class="btn">
+                    GITHUB PROFILE
                 </a>
             </div>
-        </div>
-        <div class="hero__scroll-indicator" aria-hidden="true">
-            <span>Scroll</span>
-            <div class="hero__scroll-line"></div>
         </div>
     </section>
 
     <!-- Main Content -->
     <main>
         <!-- About Section -->
-        <section id="about" class="section"
+        <section id="about" class="section" data-theme-color="white"
                  hx-get="/api/section/about"
                  hx-trigger="revealed"
                  hx-swap="innerHTML">
-            <div class="htmx-indicator">
-                <div class="loader"></div>
-            </div>
+            <div class="htmx-indicator container text-mono-sm">[ LOADING ABOUT... ]</div>
         </section>
 
         <!-- Skills Section -->
-        <section id="skills" class="section"
+        <section id="skills" class="section" data-theme-color="blue"
                  hx-get="/api/section/skills"
                  hx-trigger="revealed"
                  hx-swap="innerHTML">
-            <div class="htmx-indicator">
-                <div class="loader"></div>
-            </div>
+            <div class="htmx-indicator container text-mono-sm">[ LOADING SKILLS... ]</div>
         </section>
 
         <!-- Experience Section -->
-        <section id="experience" class="section"
+        <section id="experience" class="section" data-theme-color="black"
                  hx-get="/api/section/experience"
                  hx-trigger="revealed"
                  hx-swap="innerHTML">
-            <div class="htmx-indicator">
-                <div class="loader"></div>
-            </div>
+            <div class="htmx-indicator container text-mono-sm">[ LOADING EXPERIENCE... ]</div>
         </section>
 
         <!-- Education Section -->
-        <section id="education" class="section"
+        <section id="education" class="section" data-theme-color="white"
                  hx-get="/api/section/education"
                  hx-trigger="revealed"
                  hx-swap="innerHTML">
-            <div class="htmx-indicator">
-                <div class="loader"></div>
-            </div>
+            <div class="htmx-indicator container text-mono-sm">[ LOADING EDUCATION... ]</div>
         </section>
 
         <!-- Contact Section -->
-        <section id="contact" class="section"
+        <section id="contact" class="section" data-theme-color="blue"
                  hx-get="/api/section/contact"
                  hx-trigger="revealed"
                  hx-swap="innerHTML">
-            <div class="htmx-indicator">
-                <div class="loader"></div>
-            </div>
+            <div class="htmx-indicator container text-mono-sm">[ LOADING CONTACT... ]</div>
         </section>
     </main>
 
     <!-- Footer -->
-    <footer class="footer">
+    <footer class="footer" data-theme-color="blue">
         <div class="container">
-            <div class="footer__inner">
-                <p class="footer__text">
-                    &copy; 2026 {{ .Profile.Name }}. Built with Go, HTMX & Alpine.js
-                </p>
-                <div class="footer__social">
-                    <a href="https://{{ .Profile.Github }}" target="_blank" rel="noopener" class="footer__social-link" aria-label="GitHub">
-                        ⌨️
-                    </a>
-                </div>
-            </div>
+            <p>&copy; 2026 {{ .Profile.Name }}. BUILT WITH GO, HTMX & ALPINE.JS</p>
         </div>
     </footer>
-
-    <!-- Back to Top -->
-    <button class="back-to-top" :class="{ 'visible': scrolled }" @click="scrollToTop()" aria-label="Back to top">
-        ↑
-    </button>
 
     <!-- Alpine.js App -->
     <script>
         function portfolio() {
             return {
-                darkMode: localStorage.getItem('darkMode') === 'true',
                 scrolled: false,
                 mobileMenuOpen: false,
 
                 init() {
-                    // Watch scroll position
-                    window.addEventListener('scroll', () => {
-                        this.scrolled = window.scrollY > 50;
-                    });
+                    const sentinel = document.getElementById('scroll-sentinel');
+                    if (sentinel) {
+                        const scrollObserver = new IntersectionObserver((entries) => {
+                            this.scrolled = !entries[0].isIntersecting;
+                        }, { threshold: 0 });
+                        scrollObserver.observe(sentinel);
+                    }
 
-                    // Smooth scrolling for anchor links
                     document.addEventListener('click', (e) => {
                         const link = e.target.closest('a[href^="#"]');
                         if (link) {
@@ -183,42 +147,69 @@
                         }
                     });
 
-                    // Intersection observer for scroll reveal
-                    this.initRevealObserver();
-
-                    // Re-run reveal observer after HTMX swaps
-                    document.body.addEventListener('htmx:afterSwap', () => {
-                        this.initRevealObserver();
-                    });
-                },
-
-                toggleDarkMode() {
-                    this.darkMode = !this.darkMode;
-                    localStorage.setItem('darkMode', this.darkMode);
-                },
-
-                scrollToTop() {
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                },
-
-                initRevealObserver() {
-                    const observer = new IntersectionObserver((entries) => {
+                    // Dynamic background intersection observer
+                    const sections = document.querySelectorAll('[data-theme-color]');
+                    const themeObserver = new IntersectionObserver((entries) => {
                         entries.forEach(entry => {
                             if (entry.isIntersecting) {
-                                entry.target.classList.add('visible');
-                                observer.unobserve(entry.target);
+                                const color = entry.target.getAttribute('data-theme-color');
+                                document.documentElement.setAttribute('data-bg', color);
                             }
                         });
-                    }, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
+                    }, { threshold: 0.5 }); // Triggers when 50% of the section is visible
 
-                    document.querySelectorAll('.reveal, .stagger-children').forEach(el => {
-                        if (!el.classList.contains('visible')) {
-                            observer.observe(el);
-                        }
+                    sections.forEach(sec => themeObserver.observe(sec));
+                    
+                    // Re-run for HTMX injected content if needed
+                    document.body.addEventListener('htmx:afterSwap', (event) => {
+                        // Just in case partials introduce new themed sections
+                        const newSections = event.target.querySelectorAll('[data-theme-color]');
+                        newSections.forEach(sec => themeObserver.observe(sec));
                     });
                 }
             }
         }
+
+        function showHtmxSectionError(section) {
+            section.innerHTML = '<div class="container"><div class="form__alert form__alert--error" role="alert"><span>[ ERROR LOADING SECTION ]</span><button type="button" class="btn" data-section-retry>RETRY</button></div></div>';
+        }
+
+        function showHtmxContactError(target, html) {
+            target.innerHTML = html || '<div class="form__alert form__alert--error" role="alert">[ ERROR SENDING MESSAGE ]</div>';
+        }
+
+        document.body.addEventListener('htmx:responseError', (event) => {
+            const target = event.detail.target;
+            if (!target) return;
+            if (target.id === 'contact-response') {
+                showHtmxContactError(target, event.detail.xhr && event.detail.xhr.responseText);
+                return;
+            }
+            if (target.matches('section[hx-get]')) {
+                showHtmxSectionError(target);
+            }
+        });
+
+        document.body.addEventListener('htmx:sendError', (event) => {
+            const target = event.detail.target;
+            if (!target) return;
+            if (target.id === 'contact-response') {
+                showHtmxContactError(target);
+                return;
+            }
+            if (target.matches('section[hx-get]')) {
+                showHtmxSectionError(target);
+            }
+        });
+
+        document.addEventListener('click', (event) => {
+            const retry = event.target.closest('[data-section-retry]');
+            if (!retry) return;
+            const section = retry.closest('section[hx-get]');
+            if (section) {
+                htmx.trigger(section, 'revealed');
+            }
+        });
     </script>
 </body>
 </html>

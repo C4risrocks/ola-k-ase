@@ -1,16 +1,27 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
+	"fmt"
 	"html/template"
 	"log"
 	"net/http"
+	"net/mail"
 	"os"
 	"strings"
+	"time"
 )
 
 var db *sql.DB
 var templates *template.Template
+
+const (
+	maxContactBodyBytes  = 16 << 10
+	maxContactNameLen    = 100
+	maxContactEmailLen   = 254
+	maxContactMessageLen = 4000
+)
 
 func main() {
 	var err error
@@ -43,8 +54,17 @@ func main() {
 		port = "8080"
 	}
 
-	log.Printf("🚀 Portfolio server running at http://localhost:%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           nil,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	log.Printf("Portfolio server running at http://localhost:%s", port)
+	log.Fatal(srv.ListenAndServe())
 }
 
 func indexHandler(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +73,12 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	profile, _ := getProfile(db)
+	profile, err := getProfile(db)
+	if err != nil && err != sql.ErrNoRows {
+		log.Println("DB error:", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 
 	data := struct {
 		Profile Profile
@@ -61,31 +86,32 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 		Profile: profile,
 	}
 
-	err := templates.ExecuteTemplate(w, "index.html", data)
-	if err != nil {
-		log.Println("Template error:", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
+	renderTemplate(w, "index.html", data)
 }
 
 func sectionHandler(w http.ResponseWriter, r *http.Request) {
 	section := strings.TrimPrefix(r.URL.Path, "/api/section/")
 	var data interface{}
 	var templateName string
+	var err error
 
 	switch section {
 	case "about":
-		data, _ = getProfile(db)
+		data, err = getProfile(db)
 		templateName = "about.html"
 	case "skills":
-		data, _ = getSkills(db)
+		data, err = getSkills(db)
 		templateName = "skills.html"
 	case "experience":
-		data, _ = getExperience(db)
+		data, err = getExperience(db)
 		templateName = "experience.html"
 	case "education":
-		edus, _ := getEducation(db)
-		courses, _ := getCourses(db)
+		var edus []Education
+		var courses []Course
+		edus, err = getEducation(db)
+		if err == nil {
+			courses, err = getCourses(db)
+		}
 		data = struct {
 			Education []Education
 			Courses   []Course
@@ -101,12 +127,13 @@ func sectionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	err := templates.ExecuteTemplate(w, templateName, data)
 	if err != nil {
-		log.Println("Template error:", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Println("DB error:", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
 	}
+
+	renderTemplate(w, templateName, data)
 }
 
 func contactHandler(w http.ResponseWriter, r *http.Request) {
@@ -115,10 +142,9 @@ func contactHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := r.ParseForm()
-	if err != nil {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(`<div class="form__alert form__alert--error">⚠️ Invalid form data. Please try again.</div>`))
+	r.Body = http.MaxBytesReader(w, r.Body, maxContactBodyBytes)
+	if err := r.ParseForm(); err != nil {
+		writeContactAlert(w, http.StatusBadRequest, "error", "ph-warning", "Invalid form data. Please try again.")
 		return
 	}
 
@@ -126,20 +152,54 @@ func contactHandler(w http.ResponseWriter, r *http.Request) {
 	email := strings.TrimSpace(r.FormValue("email"))
 	message := strings.TrimSpace(r.FormValue("message"))
 
-	if name == "" || email == "" || message == "" {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(`<div class="form__alert form__alert--error">⚠️ All fields are required.</div>`))
+	if validationMessage := contactValidationError(name, email, message); validationMessage != "" {
+		writeContactAlert(w, http.StatusUnprocessableEntity, "error", "ph-warning", validationMessage)
 		return
 	}
 
-	err = insertContactMessage(db, name, email, message)
-	if err != nil {
+	if err := insertContactMessage(db, name, email, message); err != nil {
 		log.Println("DB error:", err)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Write([]byte(`<div class="form__alert form__alert--error">⚠️ An error occurred. Please try again later.</div>`))
+		writeContactAlert(w, http.StatusInternalServerError, "error", "ph-warning", "An error occurred. Please try again later.")
+		return
+	}
+
+	writeContactAlert(w, http.StatusOK, "success", "ph-check-circle", "Thank you, "+template.HTMLEscapeString(name)+"! Your message has been sent successfully.")
+}
+
+func contactValidationError(name, email, message string) string {
+	if name == "" || email == "" || message == "" {
+		return "All fields are required."
+	}
+	if len(name) > maxContactNameLen {
+		return "Name is too long."
+	}
+	if len(email) > maxContactEmailLen || !strings.Contains(email, ".") {
+		return "Please enter a valid email address."
+	}
+	if len(message) > maxContactMessageLen {
+		return "Message is too long."
+	}
+	addr, err := mail.ParseAddress(email)
+	if err != nil || addr.Address != email {
+		return "Please enter a valid email address."
+	}
+	return ""
+}
+
+func writeContactAlert(w http.ResponseWriter, status int, kind, icon, message string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	fmt.Fprintf(w, `<div class="form__alert form__alert--%s"><i class="ph %s" aria-hidden="true"></i>%s</div>`, kind, icon, message)
+}
+
+func renderTemplate(w http.ResponseWriter, name string, data interface{}) {
+	var buf bytes.Buffer
+	if err := templates.ExecuteTemplate(&buf, name, data); err != nil {
+		log.Println("Template error:", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(`<div class="form__alert form__alert--success">✅ Thank you, ` + template.HTMLEscapeString(name) + `! Your message has been sent successfully.</div>`))
+	_, _ = buf.WriteTo(w)
 }

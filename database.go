@@ -3,7 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
-	"log"
+	"fmt"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -62,6 +62,11 @@ func initDB(dataSourceName string) (*sql.DB, error) {
 		return nil, err
 	}
 
+	if _, err := db.Exec(`PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("configure sqlite: %w", err)
+	}
+
 	createTables := `
 	CREATE TABLE IF NOT EXISTS profile (
 		name TEXT,
@@ -114,39 +119,48 @@ func initDB(dataSourceName string) (*sql.DB, error) {
 
 	_, err = db.Exec(createTables)
 	if err != nil {
+		db.Close()
 		return nil, err
 	}
 
-	seedData(db)
+	if err := seedData(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 
 	return db, nil
 }
 
-func seedData(db *sql.DB) {
+func seedData(db *sql.DB) error {
 	var count int
-	db.QueryRow("SELECT COUNT(*) FROM profile").Scan(&count)
+	if err := db.QueryRow("SELECT COUNT(*) FROM profile").Scan(&count); err != nil {
+		return fmt.Errorf("count profile: %w", err)
+	}
 	if count > 0 {
-		return // Data already seeded
+		return nil
 	}
 
 	tx, err := db.Begin()
 	if err != nil {
-		log.Println("Error starting transaction:", err)
-		return
+		return fmt.Errorf("begin seed transaction: %w", err)
 	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
 
-	_, err = tx.Exec(`INSERT INTO profile (name, title, email, phone, github, nationality, about_text) 
+	if _, err := tx.Exec(`INSERT INTO profile (name, title, email, phone, github, nationality, about_text)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		"Christian de Jesús Moreno Marín",
+		"Christian Moreno",
 		"Computer Engineering Student",
 		"c4risrocks@gmail.com",
 		"5514938997",
 		"www.github.com/C4risrocks",
 		"Mexican",
-		"Technology Enthusiast usually likes to play videogames, pizza designer with passion for coding, music lover since forever. Always with the hunger of acquire knowledge through investigation and research. Crazy about Gadgets.")
-	if err != nil {
-		tx.Rollback()
-		return
+		"Technology Enthusiast usually likes to play videogames, pizza designer with passion for coding, music lover since forever. Always with the hunger of acquire knowledge through investigation and research. Crazy about Gadgets."); err != nil {
+		return fmt.Errorf("seed profile: %w", err)
 	}
 
 	skills := []Skill{
@@ -161,14 +175,12 @@ func seedData(db *sql.DB) {
 	}
 
 	for _, s := range skills {
-		_, err = tx.Exec("INSERT INTO skills (category, name, items) VALUES (?, ?, ?)", s.Category, s.Name, s.Items)
-		if err != nil {
-			tx.Rollback()
-			return
+		if _, err := tx.Exec("INSERT INTO skills (category, name, items) VALUES (?, ?, ?)", s.Category, s.Name, s.Items); err != nil {
+			return fmt.Errorf("seed skill %q: %w", s.Category, err)
 		}
 	}
 
-	detailsJSON, _ := json.Marshal([]string{
+	detailsJSON, err := json.Marshal([]string{
 		"Web Development for telecomfi.unam.mx",
 		"Database support (Oracle Database 11g, Oracle SQL Developer)",
 		"Maintenance of Cisco devices at Cisco Interconnectivity Laboratory",
@@ -177,44 +189,45 @@ func seedData(db *sql.DB) {
 		"AAA Authentication/Authorization (Local and Radius Server)",
 		"Radius Server with freeradius and Windows Server (Active Directory)",
 	})
+	if err != nil {
+		return fmt.Errorf("marshal experience details: %w", err)
+	}
 
-	_, err = tx.Exec(`INSERT INTO experience (title, organization, description, date_range, details) 
+	if _, err := tx.Exec(`INSERT INTO experience (title, organization, description, date_range, details)
 		VALUES (?, ?, ?, ?, ?)`,
 		"Social Service",
 		"Telecommunications Department, Facultad de Ingeniería, UNAM",
 		"Development, Networking and Documentation",
-		"February 2019 – Present",
-		string(detailsJSON))
-	if err != nil {
-		tx.Rollback()
-		return
+		"February 2019 - Present",
+		string(detailsJSON)); err != nil {
+		return fmt.Errorf("seed experience: %w", err)
 	}
 
-	_, err = tx.Exec(`INSERT INTO education (institution, degree, date_range) VALUES (?, ?, ?)`,
+	if _, err := tx.Exec(`INSERT INTO education (institution, degree, date_range) VALUES (?, ?, ?)`,
 		"Facultad de Ingeniería, Universidad Nacional Autónoma de México",
 		"Computer Engineering",
-		"")
-	if err != nil {
-		tx.Rollback()
-		return
+		""); err != nil {
+		return fmt.Errorf("seed education: %w", err)
 	}
 
 	courses := []Course{
-		{Name: "Hardware Design in VHDL for FPGAs", Institution: "INTESC COURSES", DateRange: "Jan 2019 – Feb 2019"},
-		{Name: "CCNA Enterprise", Institution: "Facultad de Ingeniería, UNAM", DateRange: "Aug 2019 – Dec 2019"},
-		{Name: "CCNP Security", Institution: "Facultad de Ingeniería, UNAM", DateRange: "Feb 2020 – Present"},
-		{Name: "CCNA Enterprise", Institution: "Virtual Education Community Program, Cisco", DateRange: "Mar 2020 – Present"},
+		{Name: "Hardware Design in VHDL for FPGAs", Institution: "INTESC COURSES", DateRange: "Jan 2019 - Feb 2019"},
+		{Name: "CCNA Enterprise", Institution: "Facultad de Ingeniería, UNAM", DateRange: "Aug 2019 - Dec 2019"},
+		{Name: "CCNP Security", Institution: "Facultad de Ingeniería, UNAM", DateRange: "Feb 2020 - Present"},
+		{Name: "CCNA Enterprise", Institution: "Virtual Education Community Program, Cisco", DateRange: "Mar 2020 - Present"},
 	}
 
 	for _, c := range courses {
-		_, err = tx.Exec("INSERT INTO courses (name, institution, date_range) VALUES (?, ?, ?)", c.Name, c.Institution, c.DateRange)
-		if err != nil {
-			tx.Rollback()
-			return
+		if _, err := tx.Exec("INSERT INTO courses (name, institution, date_range) VALUES (?, ?, ?)", c.Name, c.Institution, c.DateRange); err != nil {
+			return fmt.Errorf("seed course %q: %w", c.Name, err)
 		}
 	}
 
-	tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit seed transaction: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 func getProfile(db *sql.DB) (Profile, error) {
@@ -239,6 +252,9 @@ func getSkills(db *sql.DB) ([]Skill, error) {
 		}
 		skills = append(skills, s)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return skills, nil
 }
 
@@ -256,8 +272,13 @@ func getExperience(db *sql.DB) ([]Experience, error) {
 		if err := rows.Scan(&e.ID, &e.Title, &e.Organization, &e.Description, &e.DateRange, &detailsStr); err != nil {
 			return nil, err
 		}
-		json.Unmarshal([]byte(detailsStr), &e.Details)
+		if err := json.Unmarshal([]byte(detailsStr), &e.Details); err != nil {
+			return nil, fmt.Errorf("decode experience details: %w", err)
+		}
 		exps = append(exps, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return exps, nil
 }
@@ -277,6 +298,9 @@ func getEducation(db *sql.DB) ([]Education, error) {
 		}
 		edus = append(edus, e)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return edus, nil
 }
 
@@ -294,6 +318,9 @@ func getCourses(db *sql.DB) ([]Course, error) {
 			return nil, err
 		}
 		courses = append(courses, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return courses, nil
 }
