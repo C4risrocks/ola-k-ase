@@ -4,10 +4,14 @@
 .vscode
 *.db
 *.sqlite*
+*.log
+*.pid
+*.tmp
 tmp
 coverage
 dist
 bin
+portfolio
 data
 .env
 .env.*
@@ -15,3 +19,5 @@ node_modules
 *.md
 Makefile
 compose.dev.yaml
+CV *.pdf
+.DS_Store

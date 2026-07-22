@@ -3,26 +3,28 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/mail"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
+
+	"portfolio/internal/buildinfo"
 )
 
-//go:embed templates/* templates/partials/*
-var templateFS embed.FS
-
-//go:embed static/*
-var staticFS embed.FS
+//go:embed templates/* templates/partials/* static/* migrations/*.sql
+var embeddedFS embed.FS
 
 var db *sql.DB
 var templates *template.Template
@@ -60,19 +62,25 @@ func initLogger(env string, level string) {
 }
 
 func main() {
+	if err := run(); err != nil {
+		slog.Error("application stopped", slog.Any("error", err))
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	appConfig = LoadConfig()
 	initLogger(appConfig.AppEnv, appConfig.LogLevel)
 
 	slog.Info("starting application",
-		slog.String("version", Version),
-		slog.String("commit", Commit),
+		slog.String("version", buildinfo.Version),
+		slog.String("commit", buildinfo.Commit),
 		slog.String("env", appConfig.AppEnv))
 
 	var err error
 	db, err = initDB(appConfig.DatabasePath)
 	if err != nil {
-		slog.Error("failed to initialize database", slog.Any("error", err))
-		os.Exit(1)
+		return fmt.Errorf("initialize database: %w", err)
 	}
 	defer func() {
 		if err := db.Close(); err != nil {
@@ -81,21 +89,25 @@ func main() {
 	}()
 
 	// Parse templates from embed.FS
-	templates, err = template.ParseFS(templateFS, "templates/*.html", "templates/partials/*.html")
+	templates, err = template.ParseFS(embeddedFS, "templates/*.html", "templates/partials/*.html")
 	if err != nil {
-		slog.Error("failed to parse templates", slog.Any("error", err))
-		os.Exit(1)
+		return fmt.Errorf("parse templates: %w", err)
+	}
+
+	assetETags, err := buildAssetETags()
+	if err != nil {
+		return fmt.Errorf("build asset etags: %w", err)
 	}
 
 	mux := http.NewServeMux()
 
 	// Serve static files from embed.FS
-	// staticFS root is the project root, so staticFS.Open("static/...") matches URL path
-	mux.Handle("/static/", cacheMiddleware(http.FileServer(http.FS(staticFS))))
+	// embeddedFS root is the project root, so embeddedFS.Open("static/...") matches URL path.
+	mux.Handle("/static/", http.FileServer(http.FS(embeddedFS)))
 
 	// Application routes
-	mux.Handle("/", cacheMiddleware(http.HandlerFunc(indexHandler)))
-	mux.Handle("/api/section/", cacheMiddleware(http.HandlerFunc(sectionHandler)))
+	mux.HandleFunc("/", indexHandler)
+	mux.HandleFunc("/api/section/", sectionHandler)
 	mux.Handle("/api/contact", http.HandlerFunc(contactHandler))
 
 	// Operational endpoints
@@ -104,8 +116,8 @@ func main() {
 	mux.HandleFunc("/ready", readyHandler)
 	mux.HandleFunc("/version", versionHandler)
 
-	// Wrap mux with global middleware
-	handler := standardMiddleware(mux)
+	// Wrap mux with global middleware. Cache policy applies to every route.
+	handler := standardMiddleware(compressionMiddleware(cacheMiddleware(mux, assetETags)))
 
 	srv := &http.Server{
 		Addr:              ":" + appConfig.Port,
@@ -118,26 +130,57 @@ func main() {
 	}
 
 	// Graceful Shutdown
+	serverErr := make(chan error, 1)
 	go func() {
 		slog.Info("server listening", slog.String("port", appConfig.Port))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("listen error", slog.Any("error", err))
-			os.Exit(1)
+			serverErr <- err
 		}
 	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-	slog.Info("shutting down server gracefully...")
+	defer signal.Stop(quit)
+
+	select {
+	case sig := <-quit:
+		slog.Info("shutting down server gracefully", slog.String("signal", sig.String()))
+	case err := <-serverErr:
+		return fmt.Errorf("listen: %w", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {
-		slog.Error("server forced to shutdown", slog.Any("error", err))
+		return fmt.Errorf("shutdown server: %w", err)
 	}
 	slog.Info("server exited cleanly")
+	return nil
+}
+
+func buildAssetETags() (map[string]string, error) {
+	etags := make(map[string]string)
+	err := fs.WalkDir(embeddedFS, "static", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+
+		contents, err := fs.ReadFile(embeddedFS, path)
+		if err != nil {
+			return err
+		}
+		hash := sha256.Sum256(contents)
+		etags["/"+path] = fmt.Sprintf(`"%x"`, hash)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return etags, nil
 }
 
 func indexHandler(w http.ResponseWriter, r *http.Request) {
@@ -262,7 +305,7 @@ func contactValidationError(name, email, message string) string {
 func writeContactAlert(w http.ResponseWriter, status int, kind, icon, message string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	fmt.Fprintf(w, `<div class="form__alert form__alert--%s"><i class="ph %s" aria-hidden="true"></i>%s</div>`, kind, icon, message)
+	_, _ = fmt.Fprintf(w, `<div class="form__alert form__alert--%s"><i class="ph %s" aria-hidden="true"></i>%s</div>`, kind, icon, message)
 }
 
 func renderTemplate(w http.ResponseWriter, name string, data interface{}) {
@@ -284,7 +327,12 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func readyHandler(w http.ResponseWriter, r *http.Request) {
-	if err := db.Ping(); err != nil {
+	if err := checkDataDirectory(appConfig.DatabasePath); err != nil {
+		slog.Error("data directory check failed", slog.Any("error", err))
+		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := db.PingContext(r.Context()); err != nil {
 		slog.Error("db ping failed", slog.Any("error", err))
 		http.Error(w, "Service Unavailable", http.StatusServiceUnavailable)
 		return
@@ -295,9 +343,34 @@ func readyHandler(w http.ResponseWriter, r *http.Request) {
 
 func versionHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"version":    Version,
-		"commit":     Commit,
-		"build_date": BuildDate,
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"version":    buildinfo.Version,
+		"commit":     buildinfo.Commit,
+		"build_date": buildinfo.BuildDate,
 	})
+}
+
+func checkDataDirectory(databasePath string) error {
+	directory := filepath.Dir(databasePath)
+	info, err := os.Stat(directory)
+	if err != nil {
+		return fmt.Errorf("stat data directory: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("data path is not a directory: %s", directory)
+	}
+
+	testFile, err := os.CreateTemp(directory, ".ready-*")
+	if err != nil {
+		return fmt.Errorf("write data directory: %w", err)
+	}
+	testPath := testFile.Name()
+	if err := testFile.Close(); err != nil {
+		_ = os.Remove(testPath)
+		return fmt.Errorf("close data directory probe: %w", err)
+	}
+	if err := os.Remove(testPath); err != nil {
+		return fmt.Errorf("remove data directory probe: %w", err)
+	}
+	return nil
 }

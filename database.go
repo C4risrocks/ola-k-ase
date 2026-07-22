@@ -4,8 +4,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -69,6 +72,13 @@ func initDB(dataSourceName string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("ping sqlite: %w", err)
+	}
 
 	// High-performance PRAGMAs for production SQLite
 	pragmas := `
@@ -79,72 +89,72 @@ func initDB(dataSourceName string) (*sql.DB, error) {
 	PRAGMA temp_store = MEMORY;
 	`
 	if _, err := db.Exec(pragmas); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("configure sqlite pragmas: %w", err)
 	}
 
-	createTables := `
-	CREATE TABLE IF NOT EXISTS profile (
-		name TEXT,
-		title TEXT,
-		email TEXT,
-		phone TEXT,
-		github TEXT,
-		nationality TEXT,
-		about_text TEXT
-	);
-
-	CREATE TABLE IF NOT EXISTS skills (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		category TEXT,
-		name TEXT,
-		items TEXT
-	);
-
-	CREATE TABLE IF NOT EXISTS experience (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		title TEXT,
-		organization TEXT,
-		description TEXT,
-		date_range TEXT,
-		details TEXT
-	);
-
-	CREATE TABLE IF NOT EXISTS education (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		institution TEXT,
-		degree TEXT,
-		date_range TEXT
-	);
-
-	CREATE TABLE IF NOT EXISTS courses (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		name TEXT,
-		institution TEXT,
-		date_range TEXT
-	);
-
-	CREATE TABLE IF NOT EXISTS contact_messages (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		name TEXT,
-		email TEXT,
-		message TEXT,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	);
-	`
-
-	_, err = db.Exec(createTables)
-	if err != nil {
-		db.Close()
+	if err := applyMigrations(db); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 
 	if err := seedData(db); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 
 	return db, nil
+}
+
+func applyMigrations(db *sql.DB) error {
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version TEXT PRIMARY KEY,
+			applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)
+	`); err != nil {
+		return fmt.Errorf("create schema migrations table: %w", err)
+	}
+
+	migrations, err := fs.Glob(embeddedFS, "migrations/*.sql")
+	if err != nil {
+		return fmt.Errorf("list migrations: %w", err)
+	}
+	sort.Strings(migrations)
+
+	for _, migrationPath := range migrations {
+		version := strings.TrimSuffix(strings.TrimPrefix(migrationPath, "migrations/"), ".sql")
+		var applied bool
+		if err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = ?)", version).Scan(&applied); err != nil {
+			return fmt.Errorf("check migration %q: %w", version, err)
+		}
+		if applied {
+			continue
+		}
+
+		contents, err := fs.ReadFile(embeddedFS, migrationPath)
+		if err != nil {
+			return fmt.Errorf("read migration %q: %w", version, err)
+		}
+
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin migration %q: %w", version, err)
+		}
+		if _, err := tx.Exec(string(contents)); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("apply migration %q: %w", version, err)
+		}
+		if _, err := tx.Exec("INSERT INTO schema_migrations (version) VALUES (?)", version); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("record migration %q: %w", version, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit migration %q: %w", version, err)
+		}
+	}
+
+	return nil
 }
 
 func seedData(db *sql.DB) error {
@@ -259,7 +269,7 @@ func getSkills(db *sql.DB) ([]Skill, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var skills []Skill
 	for rows.Next() {
@@ -277,7 +287,7 @@ func getExperience(db *sql.DB) ([]Experience, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var exps []Experience
 	for rows.Next() {
@@ -299,7 +309,7 @@ func getEducation(db *sql.DB) ([]Education, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var edus []Education
 	for rows.Next() {
@@ -317,7 +327,7 @@ func getCourses(db *sql.DB) ([]Course, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var courses []Course
 	for rows.Next() {

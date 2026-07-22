@@ -23,7 +23,9 @@ func LoadConfig() Config {
 
 func getEnvOrDefault(key, fallback string) string {
 	if val, exists := os.LookupEnv(key); exists {
-		return val
+		if val = strings.TrimSpace(val); val != "" {
+			return val
+		}
 	}
 	return fallback
 }

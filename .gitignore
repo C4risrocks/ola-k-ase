@@ -15,4 +15,5 @@ portfolio
 
 # Go files
 *.log
+*.pid
 go.work

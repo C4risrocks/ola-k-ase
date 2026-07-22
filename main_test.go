@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"database/sql"
 	"html/template"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,13 +18,15 @@ func setupTestApp(t *testing.T) *sql.DB {
 	t.Helper()
 
 	var err error
-	db, err = initDB(filepath.Join(t.TempDir(), "portfolio_test.db"))
+	databasePath := filepath.Join(t.TempDir(), "portfolio_test.db")
+	db, err = initDB(databasePath)
 	if err != nil {
 		t.Fatalf("initDB: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	templates = template.Must(template.ParseFS(templateFS, "templates/*.html", "templates/partials/*.html"))
+	templates = template.Must(template.ParseFS(embeddedFS, "templates/*.html", "templates/partials/*.html"))
+	appConfig = Config{DatabasePath: databasePath}
 
 	return db
 }
@@ -221,5 +226,93 @@ func TestGetExperienceDecodesDetails(t *testing.T) {
 	}
 	if len(experiences[0].Details) == 0 {
 		t.Fatal("getExperience returned no decoded details")
+	}
+}
+
+func TestMigrationsAreRecorded(t *testing.T) {
+	db := setupTestApp(t)
+
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
+		t.Fatalf("read schema migrations: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("schema migrations count = %d, want 1", count)
+	}
+}
+
+func TestConfigUsesDefaultsForBlankValues(t *testing.T) {
+	t.Setenv("PORT", "")
+	t.Setenv("DATABASE_PATH", " ")
+	t.Setenv("APP_ENV", "")
+	t.Setenv("LOG_LEVEL", "")
+
+	config := LoadConfig()
+	if config.Port != "8080" {
+		t.Fatalf("port = %q, want 8080", config.Port)
+	}
+	if config.DatabasePath != "/data/site.db" {
+		t.Fatalf("database path = %q, want /data/site.db", config.DatabasePath)
+	}
+	if config.AppEnv != "development" {
+		t.Fatalf("app env = %q, want development", config.AppEnv)
+	}
+	if config.LogLevel != "info" {
+		t.Fatalf("log level = %q, want info", config.LogLevel)
+	}
+}
+
+func TestStaticCacheMiddlewareSupportsETag(t *testing.T) {
+	etags, err := buildAssetETags()
+	if err != nil {
+		t.Fatalf("build asset etags: %v", err)
+	}
+	handler := cacheMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/css")
+		_, _ = w.Write([]byte("body{}"))
+	}), etags)
+
+	first := httptest.NewRecorder()
+	firstRequest := httptest.NewRequest(http.MethodGet, "/static/css/style.css", nil)
+	handler.ServeHTTP(first, firstRequest)
+	etag := first.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("static response did not include an ETag")
+	}
+
+	second := httptest.NewRecorder()
+	secondRequest := httptest.NewRequest(http.MethodGet, "/static/css/style.css", nil)
+	secondRequest.Header.Set("If-None-Match", etag)
+	handler.ServeHTTP(second, secondRequest)
+	if second.Code != http.StatusNotModified {
+		t.Fatalf("conditional status = %d, want %d", second.Code, http.StatusNotModified)
+	}
+}
+
+func TestCompressionMiddlewareGzipsTextResponses(t *testing.T) {
+	handler := compressionMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		_, _ = w.Write([]byte("compressible response"))
+	}))
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("Accept-Encoding", "gzip")
+	handler.ServeHTTP(response, request)
+
+	if response.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatalf("content encoding = %q, want gzip", response.Header().Get("Content-Encoding"))
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(response.Body.Bytes()))
+	if err != nil {
+		t.Fatalf("create gzip reader: %v", err)
+	}
+	decompressed, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read compressed response: %v", err)
+	}
+	_ = reader.Close()
+	if string(decompressed) != "compressible response" {
+		t.Fatalf("decompressed response = %q", decompressed)
 	}
 }

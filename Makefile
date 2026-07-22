@@ -4,7 +4,7 @@ VERSION ?= $(shell git describe --tags --always --dirty || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD || echo "none")
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-LDFLAGS = -w -s -X main.Version=$(VERSION) -X main.Commit=$(COMMIT) -X main.BuildDate=$(BUILD_DATE)
+LDFLAGS = -w -s -X portfolio/internal/buildinfo.Version=$(VERSION) -X portfolio/internal/buildinfo.Commit=$(COMMIT) -X portfolio/internal/buildinfo.BuildDate=$(BUILD_DATE)
 
 run:
 	@echo "Starting development server..."
@@ -12,7 +12,8 @@ run:
 
 build:
 	@echo "Building binary..."
-	CGO_ENABLED=1 go build -ldflags="$(LDFLAGS)" -o bin/portfolio .
+	mkdir -p bin
+	CGO_ENABLED=1 go build -trimpath -buildvcs=false -ldflags="$(LDFLAGS)" -o bin/portfolio .
 
 test:
 	@echo "Running tests..."
@@ -24,7 +25,7 @@ lint:
 
 docker:
 	@echo "Building Docker image..."
-	docker build \
+	docker buildx build --load \
 		--build-arg VERSION=$(VERSION) \
 		--build-arg COMMIT=$(COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
@@ -33,4 +34,3 @@ docker:
 clean:
 	@echo "Cleaning up..."
 	rm -rf bin/
-	rm -rf data/
