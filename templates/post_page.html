@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en" data-bg="black">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ .Title }} - Christian Moreno</title>
+    <meta name="description" content="{{ .Summary }}">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='0' fill='%230a0a0c'/><text x='50' y='66' text-anchor='middle' font-family='monospace' font-size='42' font-weight='700' fill='%230044ff'>CM</text></svg>">
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v=3.1">
+</head>
+<body>
+    <nav class="nav" id="main-nav">
+        <div class="nav__inner">
+            <a href="/" class="nav__logo text-accent">CM</a>
+            <div class="nav__links">
+                <a href="/#writing" class="nav__link">[ &larr; BACK TO PORTFOLIO ]</a>
+            </div>
+        </div>
+    </nav>
+
+    <main class="section" style="padding-top: var(--space-2xl); min-height: 80vh;">
+        <div class="container" style="max-width: 900px;">
+            <div class="post-detail">
+                <div class="post-detail__header">
+                    <div class="post-detail__meta">
+                        <div class="post-card__tags">
+                            {{ range .Tags }}
+                            <span class="badge-tag">[ {{ . }} ]</span>
+                            {{ end }}
+                        </div>
+                        <div class="text-mono-sm text-muted">
+                            <span>{{ .PublishedAt }}</span> &bull; <span>{{ .ReadingTime }}</span>
+                        </div>
+                    </div>
+
+                    <h1 class="post-detail__title">{{ .Title }}</h1>
+                </div>
+
+                <div class="post-detail__body">
+                    {{ range (splitParagraphs .Content) }}
+                    <p>{{ . }}</p>
+                    {{ end }}
+                </div>
+
+                <div class="post-detail__footer">
+                    <a href="/#writing" class="btn">[ &larr; RETURN TO PORTFOLIO ]</a>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer class="footer" data-theme-color="blue">
+        <div class="container">
+            <p>&copy; 2026 CHRISTIAN MORENO. BUILT WITH GO, HTMX & ALPINE.JS</p>
+        </div>
+    </footer>
+</body>
+</html>

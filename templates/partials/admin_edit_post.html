@@ -1,0 +1,24 @@
+<form hx-post="/api/admin/posts/update/{{ .Post.ID }}" hx-target="#edit-post-alert" hx-swap="innerHTML" class="form">
+    <div id="edit-post-alert"></div>
+    <div class="form__group">
+        <label class="form__label text-mono-sm" for="edit-title">TITLE *</label>
+        <input type="text" id="edit-title" name="title" class="form__input" value="{{ .Post.Title }}" required>
+    </div>
+    <div class="form__group" style="margin-top: var(--space-md);">
+        <label class="form__label text-mono-sm" for="edit-slug">SLUG *</label>
+        <input type="text" id="edit-slug" name="slug" class="form__input" value="{{ .Post.Slug }}" required>
+    </div>
+    <div class="form__group" style="margin-top: var(--space-md);">
+        <label class="form__label text-mono-sm" for="edit-tags">TAGS (COMMA SEPARATED)</label>
+        <input type="text" id="edit-tags" name="tags" class="form__input" value="{{ .TagsStr }}">
+    </div>
+    <div class="form__group" style="margin-top: var(--space-md);">
+        <label class="form__label text-mono-sm" for="edit-summary">SUMMARY *</label>
+        <input type="text" id="edit-summary" name="summary" class="form__input" value="{{ .Post.Summary }}" required>
+    </div>
+    <div class="form__group" style="margin-top: var(--space-md);">
+        <label class="form__label text-mono-sm" for="edit-content">CONTENT *</label>
+        <textarea id="edit-content" name="content" class="form__input" rows="10" required>{{ .Post.Content }}</textarea>
+    </div>
+    <button type="submit" class="btn" style="width: 100%; margin-top: var(--space-lg);">[ SAVE CHANGES ]</button>
+</form>

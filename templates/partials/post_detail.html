@@ -1,0 +1,26 @@
+<div class="post-detail">
+    <div class="post-detail__header">
+        <div class="post-detail__meta">
+            <div class="post-card__tags">
+                {{ range .Tags }}
+                <span class="badge-tag">[ {{ . }} ]</span>
+                {{ end }}
+            </div>
+            <div class="text-mono-sm text-muted">
+                <span>{{ .PublishedAt }}</span> &bull; <span>{{ .ReadingTime }}</span>
+            </div>
+        </div>
+
+        <h1 class="post-detail__title" id="modal-title">{{ .Title }}</h1>
+    </div>
+
+    <div class="post-detail__body">
+        {{ range (splitParagraphs .Content) }}
+        <p>{{ . }}</p>
+        {{ end }}
+    </div>
+
+    <div class="post-detail__footer">
+        <button type="button" class="btn" @click="postModalOpen = false">[ CLOSE ARTICLE ]</button>
+    </div>
+</div>

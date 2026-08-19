@@ -1,0 +1,51 @@
+<div class="container">
+    <div style="display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: var(--space-md);">
+        <div>
+            <span class="section__chapter">05</span>
+            <h2 class="text-xl uppercase">Technical Writing & Research</h2>
+            <p class="hero__sub">Articles, engineering notes, and protocol analyses on networking, security, and systems architecture.</p>
+        </div>
+        <div>
+            {{ if .IsAdmin }}
+            <button type="button" class="btn text-accent" hx-get="/api/admin/dashboard" hx-target="#admin-dashboard-content" hx-swap="innerHTML" @click="adminDashboardModalOpen = true" style="margin-bottom: var(--space-md);">[ DASHBOARD ]</button>
+            <button type="button" class="btn" @click="adminPostModalOpen = true" style="margin-bottom: var(--space-md);">[ + NEW ARTICLE ]</button>
+            <button type="button" class="btn" hx-post="/api/logout" hx-trigger="click" style="margin-bottom: var(--space-md);">[ LOGOUT ]</button>
+            {{ else }}
+            <button type="button" class="btn" @click="loginModalOpen = true" style="margin-bottom: var(--space-md);">[ ADMIN LOGIN ]</button>
+            {{ end }}
+        </div>
+    </div>
+
+    <div class="grid-border" style="margin-top: var(--space-xl);">
+        {{ range .Posts }}
+        <div style="display: flex; flex-direction: column; justify-content: space-between;">
+            <div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--space-md); flex-wrap: wrap; gap: var(--space-xs);">
+                    <div style="display: flex; gap: var(--space-xs); flex-wrap: wrap;">
+                        {{ range .Tags }}
+                        <span class="badge-tag">[ {{ . }} ]</span>
+                        {{ end }}
+                    </div>
+                    <span class="text-mono-sm text-muted">{{ .ReadingTime }}</span>
+                </div>
+
+                <h3 class="font-display" style="font-size: 1.75rem; line-height: 1.2; margin-bottom: var(--space-sm);">{{ .Title }}</h3>
+                
+                <p class="text-mono-sm text-muted" style="margin-bottom: var(--space-lg); line-height: 1.6; text-transform: none;">{{ .Summary }}</p>
+            </div>
+
+            <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--clr-border); padding-top: var(--space-md); margin-top: var(--space-md);">
+                <span class="text-mono-sm text-muted">{{ .PublishedAt }}</span>
+                <a href="/post/{{ .Slug }}"
+                   class="btn btn--sm" 
+                   hx-get="/api/post/{{ .Slug }}" 
+                   hx-target="#post-modal-content" 
+                   hx-swap="innerHTML"
+                   @click="postModalOpen = true">
+                    [ READ ARTICLE ]
+                </a>
+            </div>
+        </div>
+        {{ end }}
+    </div>
+</div>

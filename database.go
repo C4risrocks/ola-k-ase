@@ -1,7 +1,10 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -9,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -59,6 +63,18 @@ type ContactMessage struct {
 	Email     string
 	Message   string
 	CreatedAt string
+	IsRead    bool
+}
+
+type Post struct {
+	ID          int
+	Slug        string
+	Title       string
+	Summary     string
+	Content     string
+	Tags        []string
+	PublishedAt string
+	ReadingTime string
 }
 
 func initDB(dataSourceName string) (*sql.DB, error) {
@@ -99,6 +115,16 @@ func initDB(dataSourceName string) (*sql.DB, error) {
 	}
 
 	if err := seedData(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	if err := seedPosts(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	if err := seedAdminUser(db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -256,6 +282,83 @@ func seedData(db *sql.DB) error {
 	return nil
 }
 
+func seedPosts(db *sql.DB) error {
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM posts").Scan(&count); err != nil {
+		return fmt.Errorf("count posts: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+
+	posts := []struct {
+		Slug        string
+		Title       string
+		Summary     string
+		Content     string
+		Tags        []string
+		PublishedAt string
+		ReadingTime string
+	}{
+		{
+			Slug:        "high-performance-sqlite-go-services",
+			Title:       "High-Performance SQLite Microservices in Go",
+			Summary:     "How to leverage SQLite WAL mode, single connection slot, and Go embed for ultra-fast, zero-overhead deployments.",
+			Content:     "SQLite is often overlooked as a production database, but when combined with WAL journal mode (PRAGMA journal_mode = WAL), synchronous = NORMAL, and Go's standard net/http package, it becomes an unbeatable stack for low-latency web services.\n\nKey Optimizations:\n- WAL Mode: Writes don't block reads, enabling concurrent read transactions.\n- Busy Timeout: Prevents SQLITE_BUSY errors under bursty traffic.\n- Single Connection Slot: Setting SetMaxOpenConns(1) avoids lock contention in Go's connection pool.\n- Embedded Binaries: Combining //go:embed with SQLite creates self-contained deployments.",
+			Tags:        []string{"GO", "SQLITE", "SYSTEMS"},
+			PublishedAt: "2026-07-28",
+			ReadingTime: "4 min read",
+		},
+		{
+			Slug:        "vlan-segmentation-8021q-enterprise-design",
+			Title:       "VLAN Segmentation & 802.1Q Protocol in Enterprise Networks",
+			Summary:     "Deep dive into Layer 2 isolation, trunking encapsulation, and spanning-tree optimizations for mission-critical infrastructure.",
+			Content:     "Virtual LANs (VLANs) divide physical broadcast domains into logical segments, improving network security and bandwidth utilization.\n\nIEEE 802.1Q Tagging:\nWhen frames cross a switch trunk line, an 802.1Q header inserts a 4-byte tag into the Ethernet frame header:\n- TPID (0x8100): Tag Protocol Identifier\n- VLAN ID (12 bits): Supports up to 4094 distinct VLANs\n\nBy enforcing strict PVST+ or MSTP topologies alongside AAA-based 802.1X dynamic VLAN assignments, campus networks maintain defense-in-depth security.",
+			Tags:        []string{"NETWORKING", "CISCO", "SECURITY"},
+			PublishedAt: "2026-06-15",
+			ReadingTime: "6 min read",
+		},
+		{
+			Slug:        "zero-framework-htmx-alpine-web-architecture",
+			Title:       "Zero-Framework Web Architecture: HTMX + Alpine.js",
+			Summary:     "Eliminating heavy SPA bundles by serving hypermedia partials over standard HTTP with minimal client-side state.",
+			Content:     "Modern web development has drifted into excessive frontend JavaScript bundlers. HTMX returns to HTML-first architecture by turning any HTML element into an AJAX trigger.\n\nWhy HTMX + Alpine.js Works:\n- HTMX: Handles server interactions, partial HTML swapping (hx-swap=\"innerHTML\"), and lazy loading (hx-trigger=\"revealed\").\n- Alpine.js: Handles short-lived UI state (toggle menus, modal visibility, dynamic scroll observers).\n- Zero Build Step: No webpack, no vite, no node_modules in production. Fast, lightweight, and maintainable.",
+			Tags:        []string{"HTMX", "ALPINE.JS", "WEB"},
+			PublishedAt: "2026-05-10",
+			ReadingTime: "3 min read",
+		},
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin seed posts transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	for _, p := range posts {
+		tagsJSON, err := json.Marshal(p.Tags)
+		if err != nil {
+			return fmt.Errorf("marshal tags for post %q: %w", p.Slug, err)
+		}
+		if _, err := tx.Exec(`INSERT INTO posts (slug, title, summary, content, tags, published_at, reading_time)
+			VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			p.Slug, p.Title, p.Summary, p.Content, string(tagsJSON), p.PublishedAt, p.ReadingTime); err != nil {
+			return fmt.Errorf("seed post %q: %w", p.Slug, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit seed posts transaction: %w", err)
+	}
+	committed = true
+	return nil
+}
+
 // Data access functions
 func getProfile(db *sql.DB) (Profile, error) {
 	var p Profile
@@ -342,5 +445,177 @@ func getCourses(db *sql.DB) ([]Course, error) {
 
 func insertContactMessage(db *sql.DB, name, email, message string) error {
 	_, err := db.Exec("INSERT INTO contact_messages (name, email, message) VALUES (?, ?, ?)", name, email, message)
+	return err
+}
+
+func getPosts(db *sql.DB) ([]Post, error) {
+	rows, err := db.Query("SELECT id, slug, title, summary, content, tags, published_at, reading_time FROM posts ORDER BY id DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var posts []Post
+	for rows.Next() {
+		var p Post
+		var tagsStr string
+		if err := rows.Scan(&p.ID, &p.Slug, &p.Title, &p.Summary, &p.Content, &tagsStr, &p.PublishedAt, &p.ReadingTime); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(tagsStr), &p.Tags); err != nil {
+			p.Tags = []string{tagsStr}
+		}
+		posts = append(posts, p)
+	}
+	return posts, rows.Err()
+}
+
+func getPostBySlug(db *sql.DB, slug string) (Post, error) {
+	var p Post
+	var tagsStr string
+	err := db.QueryRow("SELECT id, slug, title, summary, content, tags, published_at, reading_time FROM posts WHERE slug = ?", slug).
+		Scan(&p.ID, &p.Slug, &p.Title, &p.Summary, &p.Content, &tagsStr, &p.PublishedAt, &p.ReadingTime)
+	if err != nil {
+		return p, err
+	}
+	if err := json.Unmarshal([]byte(tagsStr), &p.Tags); err != nil {
+		p.Tags = []string{tagsStr}
+	}
+	return p, nil
+}
+
+func hashPassword(password string, salt string) string {
+	hash := sha256.Sum256([]byte(salt + password + "cmoreno_secret_salt"))
+	return hex.EncodeToString(hash[:])
+}
+
+func seedAdminUser(db *sql.DB) error {
+	var count int
+	if err := db.QueryRow("SELECT COUNT(*) FROM admin_users").Scan(&count); err != nil {
+		return fmt.Errorf("count admin_users: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+
+	salt := "static_portfolio_salt"
+	hash := hashPassword("admin123", salt)
+
+	_, err := db.Exec("INSERT INTO admin_users (username, password_hash) VALUES (?, ?)", "admin", salt+":"+hash)
+	if err != nil {
+		return fmt.Errorf("seed admin user: %w", err)
+	}
+	return nil
+}
+
+func authenticateAdmin(db *sql.DB, username, password string) bool {
+	var stored string
+	err := db.QueryRow("SELECT password_hash FROM admin_users WHERE username = ?", username).Scan(&stored)
+	if err != nil {
+		return false
+	}
+	parts := strings.Split(stored, ":")
+	if len(parts) != 2 {
+		return false
+	}
+	salt := parts[0]
+	expectedHash := parts[1]
+	return hashPassword(password, salt) == expectedHash
+}
+
+func createSession(db *sql.DB, username string) (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	token := hex.EncodeToString(b)
+	expiresAt := time.Now().Add(24 * time.Hour).Format(time.RFC3339)
+
+	_, err := db.Exec("INSERT INTO sessions (id, username, expires_at) VALUES (?, ?, ?)", token, username, expiresAt)
+	if err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+func validateSession(db *sql.DB, token string) (string, bool) {
+	if token == "" {
+		return "", false
+	}
+	var username, expiresAtStr string
+	err := db.QueryRow("SELECT username, expires_at FROM sessions WHERE id = ?", token).Scan(&username, &expiresAtStr)
+	if err != nil {
+		return "", false
+	}
+	expiresAt, err := time.Parse(time.RFC3339, expiresAtStr)
+	if err != nil || time.Now().After(expiresAt) {
+		_ = deleteSession(db, token)
+		return "", false
+	}
+	return username, true
+}
+
+func deleteSession(db *sql.DB, token string) error {
+	_, err := db.Exec("DELETE FROM sessions WHERE id = ?", token)
+	return err
+}
+
+func createPost(db *sql.DB, p Post) error {
+	tagsJSON, err := json.Marshal(p.Tags)
+	if err != nil {
+		return err
+	}
+	if p.ReadingTime == "" {
+		p.ReadingTime = "3 min read"
+	}
+	if p.PublishedAt == "" {
+		p.PublishedAt = time.Now().Format("2006-01-02")
+	}
+	_, err = db.Exec(`INSERT INTO posts (slug, title, summary, content, tags, published_at, reading_time)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		p.Slug, p.Title, p.Summary, p.Content, string(tagsJSON), p.PublishedAt, p.ReadingTime)
+	return err
+}
+
+func getContactMessages(db *sql.DB) ([]ContactMessage, error) {
+	rows, err := db.Query("SELECT id, name, email, message, created_at, is_read FROM contact_messages ORDER BY id DESC")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var msgs []ContactMessage
+	for rows.Next() {
+		var m ContactMessage
+		if err := rows.Scan(&m.ID, &m.Name, &m.Email, &m.Message, &m.CreatedAt, &m.IsRead); err != nil {
+			return nil, err
+		}
+		msgs = append(msgs, m)
+	}
+	return msgs, rows.Err()
+}
+
+func markContactMessageRead(db *sql.DB, id int) error {
+	_, err := db.Exec("UPDATE contact_messages SET is_read = 1 WHERE id = ?", id)
+	return err
+}
+
+func deleteContactMessage(db *sql.DB, id int) error {
+	_, err := db.Exec("DELETE FROM contact_messages WHERE id = ?", id)
+	return err
+}
+
+func updatePost(db *sql.DB, p Post) error {
+	tagsJSON, err := json.Marshal(p.Tags)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE posts SET title = ?, summary = ?, content = ?, tags = ?, slug = ? WHERE id = ?`,
+		p.Title, p.Summary, p.Content, string(tagsJSON), p.Slug, p.ID)
+	return err
+}
+
+func deletePost(db *sql.DB, id int) error {
+	_, err := db.Exec("DELETE FROM posts WHERE id = ?", id)
 	return err
 }

@@ -10,9 +10,14 @@
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='0' fill='%230a0a0c'/><text x='50' y='66' text-anchor='middle' font-family='monospace' font-size='42' font-weight='700' fill='%230044ff'>CM</text></svg>">
 
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+
     <!-- Styles -->
     <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
-    <link rel="stylesheet" href="/static/css/style.css?v=3.0">
+    <link rel="stylesheet" href="/static/css/style.css?v=3.1">
 
     <!-- HTMX -->
     <script src="https://unpkg.com/htmx.org@1.9.12"></script>
@@ -35,7 +40,11 @@
                 <a href="#skills" class="nav__link" @click="mobileMenuOpen = false">Skills</a>
                 <a href="#experience" class="nav__link" @click="mobileMenuOpen = false">Experience</a>
                 <a href="#education" class="nav__link" @click="mobileMenuOpen = false">Education</a>
+                <a href="#writing" class="nav__link" @click="mobileMenuOpen = false">Writing</a>
                 <a href="#contact" class="nav__link" @click="mobileMenuOpen = false">Contact</a>
+                {{ if .IsAdmin }}
+                <button type="button" class="nav__link text-accent" hx-get="/api/admin/dashboard" hx-target="#admin-dashboard-content" hx-swap="innerHTML" @click="adminDashboardModalOpen = true">[ DASHBOARD ]</button>
+                {{ end }}
             </div>
             
             <!-- Mobile Menu Toggle -->
@@ -75,46 +84,54 @@
         <!-- About Section -->
         <section id="about" class="section" data-theme-color="white"
                  hx-get="/api/section/about"
-                 hx-trigger="revealed"
+                 hx-trigger="none"
                  hx-swap="innerHTML">
-            <div class="htmx-indicator container text-mono-sm">[ LOADING ABOUT... ]</div>
+            {{ template "about.html" .Profile }}
         </section>
 
         <!-- Skills Section -->
         <section id="skills" class="section" data-theme-color="blue"
                  hx-get="/api/section/skills"
-                 hx-trigger="revealed"
+                 hx-trigger="none"
                  hx-swap="innerHTML">
-            <div class="htmx-indicator container text-mono-sm">[ LOADING SKILLS... ]</div>
+            {{ template "skills.html" .Skills }}
         </section>
 
         <!-- Experience Section -->
         <section id="experience" class="section" data-theme-color="black"
                  hx-get="/api/section/experience"
-                 hx-trigger="revealed"
+                 hx-trigger="none"
                  hx-swap="innerHTML">
-            <div class="htmx-indicator container text-mono-sm">[ LOADING EXPERIENCE... ]</div>
+            {{ template "experience.html" .Experiences }}
         </section>
 
         <!-- Education Section -->
-        <section id="education" class="section" data-theme-color="white"
+        <section id="education" class="section" data-theme-color="blue"
                  hx-get="/api/section/education"
-                 hx-trigger="revealed"
+                 hx-trigger="none"
                  hx-swap="innerHTML">
-            <div class="htmx-indicator container text-mono-sm">[ LOADING EDUCATION... ]</div>
+            {{ template "education.html" .EducationData }}
+        </section>
+
+        <!-- Writing Section -->
+        <section id="writing" class="section" data-theme-color="white"
+                 hx-get="/api/section/writing"
+                 hx-trigger="postCreated from:body, postUpdated from:body"
+                 hx-swap="innerHTML">
+            {{ template "writing.html" .WritingData }}
         </section>
 
         <!-- Contact Section -->
-        <section id="contact" class="section" data-theme-color="blue"
+        <section id="contact" class="section" data-theme-color="black"
                  hx-get="/api/section/contact"
-                 hx-trigger="revealed"
+                 hx-trigger="none"
                  hx-swap="innerHTML">
-            <div class="htmx-indicator container text-mono-sm">[ LOADING CONTACT... ]</div>
+            {{ template "contact.html" .Profile }}
         </section>
     </main>
 
     <!-- Footer -->
-    <footer class="footer" data-theme-color="blue">
+    <footer class="footer" data-theme-color="black">
         <div class="container">
             <p>&copy; 2026 {{ .Profile.Name }}. BUILT WITH GO, HTMX & ALPINE.JS</p>
         </div>
@@ -126,8 +143,34 @@
             return {
                 scrolled: false,
                 mobileMenuOpen: false,
+                postModalOpen: false,
+                loginModalOpen: false,
+                adminPostModalOpen: false,
+                adminDashboardModalOpen: false,
+                adminEditPostModalOpen: false,
 
                 init() {
+                    const updateScrollLock = () => {
+                        const isLocked = this.postModalOpen || this.loginModalOpen || this.adminPostModalOpen || this.adminDashboardModalOpen || this.adminEditPostModalOpen;
+                        if (isLocked) {
+                            document.documentElement.classList.add('modal-open');
+                            document.body.classList.add('modal-open');
+                            document.documentElement.style.overflow = 'hidden';
+                            document.body.style.overflow = 'hidden';
+                        } else {
+                            document.documentElement.classList.remove('modal-open');
+                            document.body.classList.remove('modal-open');
+                            document.documentElement.style.overflow = '';
+                            document.body.style.overflow = '';
+                        }
+                    };
+
+                    this.$watch('postModalOpen', updateScrollLock);
+                    this.$watch('loginModalOpen', updateScrollLock);
+                    this.$watch('adminPostModalOpen', updateScrollLock);
+                    this.$watch('adminDashboardModalOpen', updateScrollLock);
+                    this.$watch('adminEditPostModalOpen', updateScrollLock);
+
                     const sentinel = document.getElementById('scroll-sentinel');
                     if (sentinel) {
                         const scrollObserver = new IntersectionObserver((entries) => {
@@ -140,12 +183,38 @@
                         const link = e.target.closest('a[href^="#"]');
                         if (link) {
                             e.preventDefault();
-                            const target = document.querySelector(link.getAttribute('href'));
+                            const href = link.getAttribute('href');
+                            if (href === '#') {
+                                window.scrollTo({ top: 0, behavior: 'smooth' });
+                                if (history.pushState) {
+                                    history.pushState(null, null, ' ');
+                                }
+                                return;
+                            }
+                            const target = document.querySelector(href);
                             if (target) {
+                                if (history.pushState) {
+                                    history.pushState(null, null, href);
+                                }
                                 target.scrollIntoView({ behavior: 'smooth' });
                             }
                         }
                     });
+
+                    const handleInitialHash = () => {
+                        if (window.location.hash && window.location.hash !== '#') {
+                            const target = document.querySelector(window.location.hash);
+                            if (target) {
+                                target.scrollIntoView({ behavior: 'smooth' });
+                            }
+                        }
+                    };
+
+                    if (document.fonts) {
+                        document.fonts.ready.then(handleInitialHash);
+                    } else {
+                        window.addEventListener('load', handleInitialHash);
+                    }
 
                     // Dynamic background intersection observer
                     const sections = document.querySelectorAll('[data-theme-color]');
@@ -165,7 +234,9 @@
                     
                     // Re-run for HTMX injected content if needed
                     document.body.addEventListener('htmx:afterSwap', (event) => {
-                        // Just in case partials introduce new themed sections
+                        if (event.target && event.target.matches('section[hx-get]')) {
+                            event.target.setAttribute('data-loaded', 'true');
+                        }
                         const newSections = event.target.querySelectorAll('[data-theme-color]');
                         newSections.forEach(sec => themeObserver.observe(sec));
                     });
@@ -214,5 +285,102 @@
             }
         });
     </script>
+
+    <!-- Article Modal Overlay -->
+    <div class="modal"
+         :class="{ 'active': postModalOpen }"
+         x-cloak
+         @keydown.escape.window="postModalOpen = false"
+         role="dialog"
+         aria-modal="true"
+         aria-labelledby="modal-title">
+        <div class="modal__backdrop" @click="postModalOpen = false"></div>
+        <div class="modal__dialog">
+            <button type="button" class="modal__close text-mono-sm" @click="postModalOpen = false" aria-label="Close article">[ CLOSE ]</button>
+            <div id="post-modal-content">
+                <div class="text-mono-sm" style="padding: var(--space-xl);">[ LOADING ARTICLE... ]</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Admin Login Modal -->
+    <div class="modal" :class="{ 'active': loginModalOpen }" x-cloak @keydown.escape.window="loginModalOpen = false" role="dialog" aria-modal="true">
+        <div class="modal__backdrop" @click="loginModalOpen = false"></div>
+        <div class="modal__dialog" style="max-width: 500px;">
+            <button type="button" class="modal__close text-mono-sm" @click="loginModalOpen = false" aria-label="Close login">[ CLOSE ]</button>
+            <h2 class="text-xl uppercase" style="margin-bottom: var(--space-md);">Admin Login</h2>
+            <p class="text-mono-sm text-muted" style="margin-bottom: var(--space-lg);">Sign in to publish new technical entries to the blog.</p>
+            <form hx-post="/api/login" hx-target="#login-alert" hx-swap="innerHTML" class="form">
+                <div id="login-alert"></div>
+                <div class="form__group">
+                    <label class="form__label text-mono-sm" for="username">USERNAME</label>
+                    <input type="text" id="username" name="username" class="form__input" required autocomplete="username">
+                </div>
+                <div class="form__group" style="margin-top: var(--space-md);">
+                    <label class="form__label text-mono-sm" for="password">PASSWORD</label>
+                    <input type="password" id="password" name="password" class="form__input" required autocomplete="current-password">
+                </div>
+                <button type="submit" class="btn" style="width: 100%; margin-top: var(--space-lg);">[ SIGN IN ]</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Admin New Post Modal -->
+    <div class="modal" :class="{ 'active': adminPostModalOpen }" x-cloak @keydown.escape.window="adminPostModalOpen = false" role="dialog" aria-modal="true">
+        <div class="modal__backdrop" @click="adminPostModalOpen = false"></div>
+        <div class="modal__dialog" style="max-width: 750px;">
+            <button type="button" class="modal__close text-mono-sm" @click="adminPostModalOpen = false" aria-label="Close form">[ CLOSE ]</button>
+            <h2 class="text-xl uppercase" style="margin-bottom: var(--space-md);">+ New Technical Article</h2>
+            <p class="text-mono-sm text-muted" style="margin-bottom: var(--space-lg);">Publish a new entry directly into SQLite database.</p>
+            <form hx-post="/api/admin/posts" hx-target="#post-alert" hx-swap="innerHTML" class="form">
+                <div id="post-alert"></div>
+                <div class="form__group">
+                    <label class="form__label text-mono-sm" for="post-title">TITLE *</label>
+                    <input type="text" id="post-title" name="title" class="form__input" required placeholder="e.g. High-Scale Microservices Architecture">
+                </div>
+                <div class="form__group" style="margin-top: var(--space-md);">
+                    <label class="form__label text-mono-sm" for="post-slug">SLUG (OPTIONAL)</label>
+                    <input type="text" id="post-slug" name="slug" class="form__input" placeholder="high-scale-microservices-architecture">
+                </div>
+                <div class="form__group" style="margin-top: var(--space-md);">
+                    <label class="form__label text-mono-sm" for="post-tags">TAGS (COMMA SEPARATED)</label>
+                    <input type="text" id="post-tags" name="tags" class="form__input" placeholder="GO, SQLITE, ARCHITECTURE">
+                </div>
+                <div class="form__group" style="margin-top: var(--space-md);">
+                    <label class="form__label text-mono-sm" for="post-summary">SUMMARY *</label>
+                    <input type="text" id="post-summary" name="summary" class="form__input" required placeholder="Brief summary of the article">
+                </div>
+                <div class="form__group" style="margin-top: var(--space-md);">
+                    <label class="form__label text-mono-sm" for="post-content">CONTENT *</label>
+                    <textarea id="post-content" name="content" class="form__input" rows="8" required placeholder="Article body content... Separate paragraphs with a blank line."></textarea>
+                </div>
+                <button type="submit" class="btn" style="width: 100%; margin-top: var(--space-lg);">[ PUBLISH ARTICLE ]</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Admin Dashboard Modal -->
+    <div class="modal" :class="{ 'active': adminDashboardModalOpen }" x-cloak @keydown.escape.window="adminDashboardModalOpen = false" role="dialog" aria-modal="true">
+        <div class="modal__backdrop" @click="adminDashboardModalOpen = false"></div>
+        <div class="modal__dialog" style="max-width: 1000px;">
+            <button type="button" class="modal__close text-mono-sm" @click="adminDashboardModalOpen = false" aria-label="Close dashboard">[ CLOSE ]</button>
+            <h2 class="text-xl uppercase" style="margin-bottom: var(--space-md);">Admin Management Panel</h2>
+            <div id="admin-dashboard-content">
+                <div class="text-mono-sm" style="padding: var(--space-xl);">[ LOADING DASHBOARD... ]</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Admin Edit Post Modal -->
+    <div class="modal" :class="{ 'active': adminEditPostModalOpen }" x-cloak @keydown.escape.window="adminEditPostModalOpen = false" role="dialog" aria-modal="true">
+        <div class="modal__backdrop" @click="adminEditPostModalOpen = false"></div>
+        <div class="modal__dialog" style="max-width: 750px;">
+            <button type="button" class="modal__close text-mono-sm" @click="adminEditPostModalOpen = false" aria-label="Close editor">[ CLOSE ]</button>
+            <h2 class="text-xl uppercase" style="margin-bottom: var(--space-md);">Edit Technical Article</h2>
+            <div id="admin-edit-post-content">
+                <div class="text-mono-sm" style="padding: var(--space-xl);">[ LOADING EDITOR... ]</div>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
