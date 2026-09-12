@@ -4,15 +4,20 @@ import (
 	"bytes"
 	"compress/gzip"
 	"database/sql"
+	"encoding/base64"
 	"fmt"
 	"html/template"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/crypto/argon2"
 )
 
 func setupTestApp(t *testing.T) *sql.DB {
@@ -28,8 +33,30 @@ func setupTestApp(t *testing.T) *sql.DB {
 
 	templates = template.Must(parseTemplates())
 	appConfig = Config{DatabasePath: databasePath}
+	loginLimiter.reset()
+	contactLimiter.reset()
 
 	return db
+}
+
+func createTestSession(t *testing.T, db *sql.DB) (string, string) {
+	t.Helper()
+
+	if _, err := db.Exec("INSERT OR IGNORE INTO admin_users (username, password_hash) VALUES ('admin', 'test-fixture')"); err != nil {
+		t.Fatalf("create test admin: %v", err)
+	}
+
+	token, csrfToken, err := createSession(db, "admin")
+	if err != nil {
+		t.Fatalf("createSession: %v", err)
+	}
+	return token, csrfToken
+}
+
+func addMutationHeaders(req *http.Request, token, csrfToken string) {
+	req.Header.Set("Origin", "http://example.com")
+	req.Header.Set("X-CSRF-Token", csrfToken)
+	req.AddCookie(&http.Cookie{Name: "session_token", Value: token})
 }
 
 func postContact(t *testing.T, form url.Values) *httptest.ResponseRecorder {
@@ -238,8 +265,8 @@ func TestMigrationsAreRecorded(t *testing.T) {
 	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatalf("read schema migrations: %v", err)
 	}
-	if count != 4 {
-		t.Fatalf("schema migrations count = %d, want 4", count)
+	if count != 5 {
+		t.Fatalf("schema migrations count = %d, want 5", count)
 	}
 }
 
@@ -306,7 +333,12 @@ func TestPostPageHandler(t *testing.T) {
 }
 
 func TestAdminLoginAndSession(t *testing.T) {
-	setupTestApp(t)
+	db := setupTestApp(t)
+
+	const adminPassword = "correct-horse-battery-staple"
+	if err := setAdminPassword(db, "admin", adminPassword); err != nil {
+		t.Fatalf("setAdminPassword: %v", err)
+	}
 
 	form := url.Values{
 		"username": {"admin"},
@@ -314,6 +346,7 @@ func TestAdminLoginAndSession(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://example.com")
 	rr := httptest.NewRecorder()
 	loginHandler(rr, req)
 
@@ -323,10 +356,11 @@ func TestAdminLoginAndSession(t *testing.T) {
 
 	validForm := url.Values{
 		"username": {"admin"},
-		"password": {"admin123"},
+		"password": {adminPassword},
 	}
 	reqValid := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(validForm.Encode()))
 	reqValid.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	reqValid.Header.Set("Origin", "http://example.com")
 	rrValid := httptest.NewRecorder()
 	loginHandler(rrValid, reqValid)
 
@@ -335,14 +369,23 @@ func TestAdminLoginAndSession(t *testing.T) {
 	}
 
 	cookies := rrValid.Result().Cookies()
-	var sessionToken string
+	var sessionToken, csrfToken string
 	for _, c := range cookies {
-		if c.Name == "session_token" {
+		switch c.Name {
+		case "session_token":
 			sessionToken = c.Value
+			if !c.HttpOnly {
+				t.Fatal("session_token cookie must be HttpOnly")
+			}
+		case "csrf_token":
+			csrfToken = c.Value
 		}
 	}
 	if sessionToken == "" {
 		t.Fatal("session_token cookie not set")
+	}
+	if csrfToken == "" {
+		t.Fatal("csrf_token cookie not set")
 	}
 
 	username, ok := validateSession(db, sessionToken)
@@ -353,10 +396,7 @@ func TestAdminLoginAndSession(t *testing.T) {
 
 func TestAdminCreatePost(t *testing.T) {
 	db := setupTestApp(t)
-	token, err := createSession(db, "admin")
-	if err != nil {
-		t.Fatalf("createSession: %v", err)
-	}
+	token, csrfToken := createTestSession(t, db)
 
 	form := url.Values{
 		"title":   {"Test Article Title"},
@@ -368,7 +408,7 @@ func TestAdminCreatePost(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/posts", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: "session_token", Value: token})
+	addMutationHeaders(req, token, csrfToken)
 	rr := httptest.NewRecorder()
 
 	adminCreatePostHandler(rr, req)
@@ -476,10 +516,7 @@ func TestAdminDashboardUnauthorized(t *testing.T) {
 
 func TestAdminDashboardAuthorized(t *testing.T) {
 	db := setupTestApp(t)
-	token, err := createSession(db, "admin")
-	if err != nil {
-		t.Fatalf("createSession: %v", err)
-	}
+	token, _ := createTestSession(t, db)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/dashboard", nil)
 	req.AddCookie(&http.Cookie{Name: "session_token", Value: token})
@@ -496,10 +533,7 @@ func TestAdminDashboardAuthorized(t *testing.T) {
 
 func TestAdminEditAndUpdatePost(t *testing.T) {
 	db := setupTestApp(t)
-	token, err := createSession(db, "admin")
-	if err != nil {
-		t.Fatalf("createSession: %v", err)
-	}
+	token, csrfToken := createTestSession(t, db)
 
 	posts, err := getPosts(db)
 	if err != nil || len(posts) == 0 {
@@ -527,7 +561,7 @@ func TestAdminEditAndUpdatePost(t *testing.T) {
 	}
 	reqUpdate := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/admin/posts/update/%d", postID), strings.NewReader(form.Encode()))
 	reqUpdate.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	reqUpdate.AddCookie(&http.Cookie{Name: "session_token", Value: token})
+	addMutationHeaders(reqUpdate, token, csrfToken)
 	rrUpdate := httptest.NewRecorder()
 	adminUpdatePostHandler(rrUpdate, reqUpdate)
 
@@ -546,12 +580,9 @@ func TestAdminEditAndUpdatePost(t *testing.T) {
 
 func TestAdminDeletePost(t *testing.T) {
 	db := setupTestApp(t)
-	token, err := createSession(db, "admin")
-	if err != nil {
-		t.Fatalf("createSession: %v", err)
-	}
+	token, csrfToken := createTestSession(t, db)
 
-	err = createPost(db, Post{
+	err := createPost(db, Post{
 		Slug:    "post-to-delete",
 		Title:   "Post To Delete",
 		Summary: "Summary",
@@ -567,7 +598,7 @@ func TestAdminDeletePost(t *testing.T) {
 	}
 
 	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/admin/posts/delete/%d", p.ID), nil)
-	req.AddCookie(&http.Cookie{Name: "session_token", Value: token})
+	addMutationHeaders(req, token, csrfToken)
 	rr := httptest.NewRecorder()
 	adminDeletePostHandler(rr, req)
 
@@ -583,13 +614,10 @@ func TestAdminDeletePost(t *testing.T) {
 
 func TestAdminMarkAndDeleteContactMessage(t *testing.T) {
 	db := setupTestApp(t)
-	token, err := createSession(db, "admin")
-	if err != nil {
-		t.Fatalf("createSession: %v", err)
-	}
+	token, csrfToken := createTestSession(t, db)
 
 	// Insert test message
-	_, err = db.Exec("INSERT INTO contact_messages (name, email, message) VALUES ('John Doe', 'john@example.com', 'Test message body')")
+	_, err := db.Exec("INSERT INTO contact_messages (name, email, message) VALUES ('John Doe', 'john@example.com', 'Test message body')")
 	if err != nil {
 		t.Fatalf("insert contact_message: %v", err)
 	}
@@ -602,7 +630,7 @@ func TestAdminMarkAndDeleteContactMessage(t *testing.T) {
 
 	// Mark read
 	reqRead := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/admin/messages/read/%d", msgID), nil)
-	reqRead.AddCookie(&http.Cookie{Name: "session_token", Value: token})
+	addMutationHeaders(reqRead, token, csrfToken)
 	rrRead := httptest.NewRecorder()
 	adminMarkMessageReadHandler(rrRead, reqRead)
 
@@ -617,7 +645,7 @@ func TestAdminMarkAndDeleteContactMessage(t *testing.T) {
 
 	// Delete message
 	reqDel := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/admin/messages/delete/%d", msgID), nil)
-	reqDel.AddCookie(&http.Cookie{Name: "session_token", Value: token})
+	addMutationHeaders(reqDel, token, csrfToken)
 	rrDel := httptest.NewRecorder()
 	adminDeleteMessageHandler(rrDel, reqDel)
 
@@ -628,5 +656,499 @@ func TestAdminMarkAndDeleteContactMessage(t *testing.T) {
 	msgsAfterDel, _ := getContactMessages(db)
 	if len(msgsAfterDel) != 0 {
 		t.Fatalf("expected 0 messages after delete, got %d", len(msgsAfterDel))
+	}
+}
+
+func TestSetAdminPasswordRejectsWeakPassword(t *testing.T) {
+	db := setupTestApp(t)
+
+	if err := setAdminPassword(db, "admin", "short"); err == nil {
+		t.Fatal("expected short password to be rejected")
+	}
+	if err := setAdminPassword(db, "admin", strings.Repeat("a", maxAdminPasswordLength+1)); err == nil {
+		t.Fatal("expected oversized password to be rejected")
+	}
+}
+
+func TestAuthenticateAdminAcceptsArgon2idPassword(t *testing.T) {
+	db := setupTestApp(t)
+
+	const adminPassword = "a-very-secure-password"
+	if err := setAdminPassword(db, "admin", adminPassword); err != nil {
+		t.Fatalf("setAdminPassword: %v", err)
+	}
+
+	if !authenticateAdmin(db, "admin", adminPassword) {
+		t.Fatal("expected valid password to authenticate")
+	}
+	if authenticateAdmin(db, "admin", "wrong-password") {
+		t.Fatal("expected wrong password to be rejected")
+	}
+	if authenticateAdmin(db, "missing", adminPassword) {
+		t.Fatal("expected unknown user to be rejected")
+	}
+}
+
+func TestAuthenticateAdminRejectsLegacyHash(t *testing.T) {
+	db := setupTestApp(t)
+
+	legacyHash := "static_portfolio_salt:d34db33f"
+	if _, err := db.Exec("INSERT INTO admin_users (username, password_hash) VALUES (?, ?)", "legacy", legacyHash); err != nil {
+		t.Fatalf("insert legacy admin: %v", err)
+	}
+
+	if authenticateAdmin(db, "legacy", "admin123") {
+		t.Fatal("legacy SHA-256 hash must not authenticate")
+	}
+}
+
+func TestSetAdminPasswordInvalidatesSessions(t *testing.T) {
+	db := setupTestApp(t)
+
+	if err := setAdminPassword(db, "admin", "first-secure-password"); err != nil {
+		t.Fatalf("setAdminPassword: %v", err)
+	}
+
+	token, _, err := createSession(db, "admin")
+	if err != nil {
+		t.Fatalf("createSession: %v", err)
+	}
+
+	if err := setAdminPassword(db, "admin", "second-secure-password"); err != nil {
+		t.Fatalf("setAdminPassword: %v", err)
+	}
+
+	if _, ok := validateSession(db, token); ok {
+		t.Fatal("expected password change to invalidate existing sessions")
+	}
+}
+
+func TestHasSecureAdmin(t *testing.T) {
+	db := setupTestApp(t)
+
+	secure, err := hasSecureAdmin(db)
+	if err != nil {
+		t.Fatalf("hasSecureAdmin: %v", err)
+	}
+	if secure {
+		t.Fatal("expected fresh database to have no secure admin")
+	}
+
+	if err := setAdminPassword(db, "admin", "a-very-secure-password"); err != nil {
+		t.Fatalf("setAdminPassword: %v", err)
+	}
+
+	secure, err = hasSecureAdmin(db)
+	if err != nil {
+		t.Fatalf("hasSecureAdmin: %v", err)
+	}
+	if !secure {
+		t.Fatal("expected secure admin after setAdminPassword")
+	}
+}
+
+func TestAdminSetPasswordCommandFromStdin(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "admin-command.db")
+	t.Setenv("DATABASE_PATH", databasePath)
+
+	readEnd, writeEnd, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create stdin pipe: %v", err)
+	}
+	oldStdin := os.Stdin
+	os.Stdin = readEnd
+	t.Cleanup(func() {
+		os.Stdin = oldStdin
+		_ = readEnd.Close()
+	})
+
+	if _, err := writeEnd.WriteString("command-line-password\n"); err != nil {
+		t.Fatalf("write password to pipe: %v", err)
+	}
+	if err := writeEnd.Close(); err != nil {
+		t.Fatalf("close password pipe: %v", err)
+	}
+
+	if err := runAdminCommand([]string{"set-password", "--password-stdin"}); err != nil {
+		t.Fatalf("runAdminCommand: %v", err)
+	}
+
+	commandDB, err := openDB(databasePath)
+	if err != nil {
+		t.Fatalf("open command database: %v", err)
+	}
+	t.Cleanup(func() { _ = commandDB.Close() })
+
+	if !authenticateAdmin(commandDB, "admin", "command-line-password") {
+		t.Fatal("expected password set through the command to authenticate")
+	}
+
+	var legacyCount int
+	if err := commandDB.QueryRow("SELECT COUNT(*) FROM admin_users WHERE password_hash NOT LIKE '$argon2id$%'").Scan(&legacyCount); err != nil {
+		t.Fatalf("count legacy hashes: %v", err)
+	}
+	if legacyCount != 0 {
+		t.Fatalf("legacy hash count = %d, want 0", legacyCount)
+	}
+}
+
+func TestFreshDatabaseHasNoAdminUsers(t *testing.T) {
+	db := setupTestApp(t)
+
+	if got := countRows(t, db, "SELECT COUNT(*) FROM admin_users"); got != 0 {
+		t.Fatalf("admin_users count = %d, want 0", got)
+	}
+}
+
+func TestLoginKeepsPasswordSpaces(t *testing.T) {
+	db := setupTestApp(t)
+
+	const adminPassword = "  spaced password  "
+	if err := setAdminPassword(db, "admin", adminPassword); err != nil {
+		t.Fatalf("setAdminPassword: %v", err)
+	}
+
+	login := func(password string) int {
+		form := url.Values{"username": {"admin"}, "password": {password}}
+		req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", "http://example.com")
+		rr := httptest.NewRecorder()
+		loginHandler(rr, req)
+		return rr.Code
+	}
+
+	if code := login(adminPassword); code != http.StatusOK {
+		t.Fatalf("exact password status = %d, want %d", code, http.StatusOK)
+	}
+	if code := login(strings.TrimSpace(adminPassword)); code != http.StatusUnauthorized {
+		t.Fatalf("trimmed password status = %d, want %d", code, http.StatusUnauthorized)
+	}
+}
+
+func TestLoginRequiresSameOrigin(t *testing.T) {
+	db := setupTestApp(t)
+
+	if err := setAdminPassword(db, "admin", "a-very-secure-password"); err != nil {
+		t.Fatalf("setAdminPassword: %v", err)
+	}
+
+	form := url.Values{"username": {"admin"}, "password": {"a-very-secure-password"}}
+	for _, origin := range []string{"", "https://evil.example.com"} {
+		req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		rr := httptest.NewRecorder()
+		loginHandler(rr, req)
+
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("origin %q status = %d, want %d", origin, rr.Code, http.StatusForbidden)
+		}
+	}
+}
+
+func TestLoginRateLimited(t *testing.T) {
+	db := setupTestApp(t)
+
+	if err := setAdminPassword(db, "admin", "a-very-secure-password"); err != nil {
+		t.Fatalf("setAdminPassword: %v", err)
+	}
+
+	form := url.Values{"username": {"admin"}, "password": {"wrong-password"}}
+	for attempt := 0; attempt < 5; attempt++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", "http://example.com")
+		rr := httptest.NewRecorder()
+		loginHandler(rr, req)
+
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status = %d, want %d", attempt, rr.Code, http.StatusUnauthorized)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "http://example.com")
+	rr := httptest.NewRecorder()
+	loginHandler(rr, req)
+
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("rate limited status = %d, want %d", rr.Code, http.StatusTooManyRequests)
+	}
+}
+
+func TestContactRateLimited(t *testing.T) {
+	setupTestApp(t)
+
+	form := url.Values{
+		"name":    {"Review"},
+		"email":   {"review@example.com"},
+		"message": {"hello"},
+	}
+	for attempt := 0; attempt < 5; attempt++ {
+		if rr := postContact(t, form); rr.Code != http.StatusOK {
+			t.Fatalf("attempt %d status = %d, want %d", attempt, rr.Code, http.StatusOK)
+		}
+	}
+	if rr := postContact(t, form); rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("rate limited status = %d, want %d", rr.Code, http.StatusTooManyRequests)
+	}
+}
+
+func TestSessionTokenIsHashedAtRest(t *testing.T) {
+	db := setupTestApp(t)
+
+	if err := setAdminPassword(db, "admin", "a-very-secure-password"); err != nil {
+		t.Fatalf("setAdminPassword: %v", err)
+	}
+
+	token, csrfToken, err := createSession(db, "admin")
+	if err != nil {
+		t.Fatalf("createSession: %v", err)
+	}
+
+	var storedID, storedCSRF, expiresAt string
+	if err := db.QueryRow("SELECT id, csrf_hash, expires_at FROM sessions LIMIT 1").Scan(&storedID, &storedCSRF, &expiresAt); err != nil {
+		t.Fatalf("read session: %v", err)
+	}
+	if storedID == token {
+		t.Fatal("raw session token must not be stored")
+	}
+	if storedID != hashSessionToken(token) {
+		t.Fatalf("stored session id = %q, want token hash", storedID)
+	}
+	if storedCSRF == csrfToken || storedCSRF != hashSessionToken(csrfToken) {
+		t.Fatal("csrf token must be stored only as a hash")
+	}
+	if _, err := time.Parse(time.RFC3339, expiresAt); err != nil {
+		t.Fatalf("expires_at is not RFC3339: %v", err)
+	}
+}
+
+func TestSessionRequiresExistingAdmin(t *testing.T) {
+	db := setupTestApp(t)
+
+	if err := setAdminPassword(db, "admin", "a-very-secure-password"); err != nil {
+		t.Fatalf("setAdminPassword: %v", err)
+	}
+	token, _, err := createSession(db, "admin")
+	if err != nil {
+		t.Fatalf("createSession: %v", err)
+	}
+
+	if _, err := db.Exec("DELETE FROM admin_users"); err != nil {
+		t.Fatalf("delete admin users: %v", err)
+	}
+
+	if _, ok := validateSession(db, token); ok {
+		t.Fatal("session must be invalid when the admin user no longer exists")
+	}
+}
+
+func TestExpiredSessionsAreRemovedOnCreate(t *testing.T) {
+	db := setupTestApp(t)
+
+	if err := setAdminPassword(db, "admin", "a-very-secure-password"); err != nil {
+		t.Fatalf("setAdminPassword: %v", err)
+	}
+
+	expiredAt := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	if _, err := db.Exec("INSERT INTO sessions (id, username, expires_at, csrf_hash) VALUES (?, ?, ?, ?)",
+		"expired-session", "admin", expiredAt, "expired-csrf"); err != nil {
+		t.Fatalf("insert expired session: %v", err)
+	}
+
+	if _, _, err := createSession(db, "admin"); err != nil {
+		t.Fatalf("createSession: %v", err)
+	}
+
+	if got := countRows(t, db, "SELECT COUNT(*) FROM sessions WHERE id = 'expired-session'"); got != 0 {
+		t.Fatalf("expired sessions count = %d, want 0", got)
+	}
+}
+
+func TestAdminMutationRequiresCSRFAndOrigin(t *testing.T) {
+	db := setupTestApp(t)
+	token, csrfToken := createTestSession(t, db)
+
+	cases := []struct {
+		name   string
+		origin string
+		csrf   string
+	}{
+		{name: "missing csrf", origin: "http://example.com", csrf: ""},
+		{name: "wrong csrf", origin: "http://example.com", csrf: "not-the-token"},
+		{name: "cross origin", origin: "https://evil.example.com", csrf: csrfToken},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/admin/posts/delete/1", nil)
+			req.Header.Set("Origin", tc.origin)
+			if tc.csrf != "" {
+				req.Header.Set("X-CSRF-Token", tc.csrf)
+			}
+			req.AddCookie(&http.Cookie{Name: "session_token", Value: token})
+			rr := httptest.NewRecorder()
+			adminDeletePostHandler(rr, req)
+
+			if rr.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d", rr.Code, http.StatusForbidden)
+			}
+		})
+	}
+}
+
+func TestAdminCreatePostValidatesInput(t *testing.T) {
+	db := setupTestApp(t)
+	token, csrfToken := createTestSession(t, db)
+
+	cases := []struct {
+		name string
+		form url.Values
+	}{
+		{
+			name: "invalid slug",
+			form: url.Values{"title": {"Title"}, "slug": {"Invalid Slug!"}, "summary": {"s"}, "content": {"c"}},
+		},
+		{
+			name: "title too long",
+			form: url.Values{"title": {strings.Repeat("a", maxPostTitleLen+1)}, "summary": {"s"}, "content": {"c"}},
+		},
+		{
+			name: "too many tags",
+			form: url.Values{"title": {"Title"}, "summary": {"s"}, "content": {"c"}, "tags": {"a,b,c,d,e,f,g,h,i,j,k"}},
+		},
+		{
+			name: "oversized body",
+			form: url.Values{"title": {"Title"}, "summary": {"s"}, "content": {strings.Repeat("a", maxPostBodyBytes+100)}},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/admin/posts", strings.NewReader(tc.form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			addMutationHeaders(req, token, csrfToken)
+			rr := httptest.NewRecorder()
+			adminCreatePostHandler(rr, req)
+
+			if rr.Code != http.StatusUnprocessableEntity && rr.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 or 422; body: %q", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestParsePasswordHashRejectsOutOfRangeParameters(t *testing.T) {
+	salt := base64.RawStdEncoding.EncodeToString(bytes.Repeat([]byte{1}, argon2IDSaltLength))
+	key := base64.RawStdEncoding.EncodeToString(bytes.Repeat([]byte{2}, argon2IDKeyLength))
+
+	cases := []string{
+		fmt.Sprintf("$argon2id$v=%d$m=%d,t=3,p=2$%s$%s", argon2.Version, argon2IDMaxMemory+1, salt, key),
+		fmt.Sprintf("$argon2id$v=%d$m=65536,t=%d,p=2$%s$%s", argon2.Version, argon2IDMaxIterations+1, salt, key),
+		fmt.Sprintf("$argon2id$v=%d$m=65536,t=3,p=%d$%s$%s", argon2.Version, argon2IDMaxParallelism+1, salt, key),
+		fmt.Sprintf("$argon2id$v=%d$m=65536,t=3$%s$%s", argon2.Version, salt, key),
+		fmt.Sprintf("$argon2id$v=%d$m=65536,t=3,p=2$%s$%s", argon2.Version+1, salt, key),
+	}
+
+	for _, encoded := range cases {
+		if _, _, _, err := parsePasswordHash(encoded); err == nil {
+			t.Fatalf("expected parse error for %q", encoded)
+		}
+	}
+}
+
+func TestHasSecureAdminRejectsAnyInvalidHash(t *testing.T) {
+	db := setupTestApp(t)
+
+	if err := setAdminPassword(db, "admin", "a-very-secure-password"); err != nil {
+		t.Fatalf("setAdminPassword: %v", err)
+	}
+	if _, err := db.Exec("INSERT INTO admin_users (username, password_hash) VALUES (?, ?)", "legacy", "salt:deadbeef"); err != nil {
+		t.Fatalf("insert legacy admin: %v", err)
+	}
+
+	secure, err := hasSecureAdmin(db)
+	if err != nil {
+		t.Fatalf("hasSecureAdmin: %v", err)
+	}
+	if secure {
+		t.Fatal("any invalid hash must make hasSecureAdmin false")
+	}
+}
+
+func TestTemplatesUseEmbeddedAssets(t *testing.T) {
+	setupTestApp(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	indexHandler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("index status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	body := rr.Body.String()
+	for _, forbidden := range []string{"unpkg.com", "cdn.jsdelivr.net", "fonts.googleapis.com", "fonts.gstatic.com"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("index still references external asset %s", forbidden)
+		}
+	}
+	for _, required := range []string{
+		"/static/js/htmx.min.js",
+		"/static/js/alpine.min.js",
+		"/static/js/app.js",
+		"/static/css/fonts.css",
+		"/static/css/phosphor.css",
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("index missing %s", required)
+		}
+	}
+}
+
+func TestEmbeddedAssetsIncludeVendoredFrontend(t *testing.T) {
+	etags, err := buildAssetETags()
+	if err != nil {
+		t.Fatalf("buildAssetETags: %v", err)
+	}
+
+	for _, asset := range []string{
+		"/static/js/htmx.min.js",
+		"/static/js/alpine.min.js",
+		"/static/js/app.js",
+		"/static/css/fonts.css",
+		"/static/css/phosphor.css",
+		"/static/fonts/Phosphor.woff2",
+	} {
+		if etags[asset] == "" {
+			t.Fatalf("missing embedded asset %s", asset)
+		}
+	}
+}
+
+func TestContentSecurityPolicyIsSelfHosted(t *testing.T) {
+	handler := standardMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	csp := rr.Header().Get("Content-Security-Policy")
+	if csp == "" {
+		t.Fatal("missing Content-Security-Policy header")
+	}
+	for _, forbidden := range []string{"unpkg.com", "jsdelivr", "fonts.googleapis.com", "fonts.gstatic.com"} {
+		if strings.Contains(csp, forbidden) {
+			t.Fatalf("CSP still allows %s: %s", forbidden, csp)
+		}
+	}
+	if !strings.Contains(csp, "script-src 'self' 'unsafe-eval'") {
+		t.Fatalf("unexpected script-src in CSP: %s", csp)
 	}
 }

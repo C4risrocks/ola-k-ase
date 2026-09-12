@@ -36,6 +36,15 @@ const (
 	maxContactNameLen    = 100
 	maxContactEmailLen   = 254
 	maxContactMessageLen = 4000
+
+	maxLoginBodyBytes = 4 << 10
+	maxPostBodyBytes  = 64 << 10
+	maxPostTitleLen   = 200
+	maxPostSummaryLen = 500
+	maxPostContentLen = 20000
+	maxPostSlugLen    = 100
+	maxPostTagCount   = 10
+	maxPostTagLen     = 32
 )
 
 func initLogger(env string, level string) {
@@ -63,6 +72,14 @@ func initLogger(env string, level string) {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "admin" {
+		if err := runAdminCommand(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := run(); err != nil {
 		slog.Error("application stopped", slog.Any("error", err))
 		os.Exit(1)
@@ -88,6 +105,17 @@ func run() error {
 			slog.Error("error closing database", slog.Any("error", err))
 		}
 	}()
+
+	secureAdmin, err := hasSecureAdmin(db)
+	if err != nil {
+		return fmt.Errorf("check admin user: %w", err)
+	}
+	if !secureAdmin {
+		if appConfig.AppEnv == "production" {
+			return fmt.Errorf("no secure admin user configured; run \"portfolio admin set-password\" against %s", appConfig.DatabasePath)
+		}
+		slog.Warn("no secure admin user configured; run 'portfolio admin set-password' before logging in")
+	}
 
 	// Parse templates from embed.FS
 	templates, err = parseTemplates()
@@ -387,13 +415,24 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !sameOriginRequest(r) {
+		writeLoginAlert(w, http.StatusForbidden, "error", "Request rejected.")
+		return
+	}
+
+	if !loginLimiter.allow(clientIP(r)) {
+		writeLoginAlert(w, http.StatusTooManyRequests, "error", "Too many attempts. Try again later.")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxLoginBodyBytes)
 	if err := r.ParseForm(); err != nil {
 		writeLoginAlert(w, http.StatusBadRequest, "error", "Invalid form data.")
 		return
 	}
 
 	username := strings.TrimSpace(r.FormValue("username"))
-	password := strings.TrimSpace(r.FormValue("password"))
+	password := r.FormValue("password")
 
 	if username == "" || password == "" {
 		writeLoginAlert(w, http.StatusUnprocessableEntity, "error", "Username and password are required.")
@@ -405,40 +444,41 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := createSession(db, username)
+	token, csrfToken, err := createSession(db, username)
 	if err != nil {
 		slog.Error("session creation failed", slog.Any("error", err))
 		writeLoginAlert(w, http.StatusInternalServerError, "error", "Could not create session.")
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "session_token",
-		Value:    token,
-		Path:     "/",
-		Expires:  time.Now().Add(24 * time.Hour),
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
+	http.SetCookie(w, sessionCookie("session_token", token, true))
+	http.SetCookie(w, sessionCookie("csrf_token", csrfToken, false))
 
 	w.Header().Set("HX-Refresh", "true")
 	writeLoginAlert(w, http.StatusOK, "success", "Logged in successfully!")
 }
 
 func logoutHandler(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie("session_token")
-	if err == nil && cookie != nil {
-		_ = deleteSession(db, cookie.Value)
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !sameOriginRequest(r) {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "session_token",
-		Value:    "",
-		Path:     "/",
-		Expires:  time.Unix(0, 0),
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
+	token := sessionTokenFromRequest(r)
+	if token != "" {
+		if record, ok := lookupSession(db, token); ok && !csrfMatches(record, r.Header.Get("X-CSRF-Token")) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+		_ = deleteSession(db, token)
+	}
+
+	http.SetCookie(w, clearCookie("session_token", true))
+	http.SetCookie(w, clearCookie("csrf_token", false))
 
 	if r.Header.Get("HX-Request") != "" {
 		w.Header().Set("HX-Refresh", "true")
@@ -450,67 +490,29 @@ func logoutHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func adminCreatePostHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !requireAdminMutation(w, r) {
 		return
 	}
 
-	cookie, _ := r.Cookie("session_token")
-	var token string
-	if cookie != nil {
-		token = cookie.Value
-	}
-	_, isAdmin := validateSession(db, token)
-	if !isAdmin {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
+	r.Body = http.MaxBytesReader(w, r.Body, maxPostBodyBytes)
 	if err := r.ParseForm(); err != nil {
 		writePostAlert(w, http.StatusBadRequest, "error", "Invalid form data.")
 		return
 	}
 
-	title := strings.TrimSpace(r.FormValue("title"))
-	slug := strings.TrimSpace(r.FormValue("slug"))
-	summary := strings.TrimSpace(r.FormValue("summary"))
-	content := strings.TrimSpace(r.FormValue("content"))
-	tagsRaw := strings.TrimSpace(r.FormValue("tags"))
-
-	if title == "" || summary == "" || content == "" {
-		writePostAlert(w, http.StatusUnprocessableEntity, "error", "Title, summary, and content are required.")
+	post, validationMessage := readPostForm(r)
+	if validationMessage != "" {
+		writePostAlert(w, http.StatusUnprocessableEntity, "error", validationMessage)
 		return
 	}
 
-	if slug == "" {
-		slug = strings.ToLower(strings.ReplaceAll(title, " ", "-"))
-	}
-
-	var tags []string
-	if tagsRaw != "" {
-		for _, tag := range strings.Split(tagsRaw, ",") {
-			t := strings.TrimSpace(tag)
-			if t != "" {
-				tags = append(tags, strings.ToUpper(t))
-			}
-		}
-	}
-
-	wordCount := len(strings.Fields(content))
+	wordCount := len(strings.Fields(post.Content))
 	readingMins := wordCount / 150
 	if readingMins < 1 {
 		readingMins = 1
 	}
-
-	post := Post{
-		Slug:        slug,
-		Title:       title,
-		Summary:     summary,
-		Content:     content,
-		Tags:        tags,
-		PublishedAt: time.Now().Format("2006-01-02"),
-		ReadingTime: fmt.Sprintf("%d min read", readingMins),
-	}
+	post.PublishedAt = time.Now().Format("2006-01-02")
+	post.ReadingTime = fmt.Sprintf("%d min read", readingMins)
 
 	if err := createPost(db, post); err != nil {
 		slog.Error("create post failed", slog.Any("error", err))
@@ -636,19 +638,7 @@ func adminEditPostFormHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func adminUpdatePostHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	cookie, _ := r.Cookie("session_token")
-	var token string
-	if cookie != nil {
-		token = cookie.Value
-	}
-	_, isAdmin := validateSession(db, token)
-	if !isAdmin {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	if !requireAdminMutation(w, r) {
 		return
 	}
 
@@ -659,44 +649,18 @@ func adminUpdatePostHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxPostBodyBytes)
 	if err := r.ParseForm(); err != nil {
 		writePostAlert(w, http.StatusBadRequest, "error", "Invalid form data.")
 		return
 	}
 
-	title := strings.TrimSpace(r.FormValue("title"))
-	slug := strings.TrimSpace(r.FormValue("slug"))
-	summary := strings.TrimSpace(r.FormValue("summary"))
-	content := strings.TrimSpace(r.FormValue("content"))
-	tagsRaw := strings.TrimSpace(r.FormValue("tags"))
-
-	if title == "" || summary == "" || content == "" {
-		writePostAlert(w, http.StatusUnprocessableEntity, "error", "Title, summary, and content are required.")
+	post, validationMessage := readPostForm(r)
+	if validationMessage != "" {
+		writePostAlert(w, http.StatusUnprocessableEntity, "error", validationMessage)
 		return
 	}
-
-	if slug == "" {
-		slug = strings.ToLower(strings.ReplaceAll(title, " ", "-"))
-	}
-
-	var tags []string
-	if tagsRaw != "" {
-		for _, tag := range strings.Split(tagsRaw, ",") {
-			t := strings.TrimSpace(tag)
-			if t != "" {
-				tags = append(tags, strings.ToUpper(t))
-			}
-		}
-	}
-
-	post := Post{
-		ID:      id,
-		Slug:    slug,
-		Title:   title,
-		Summary: summary,
-		Content: content,
-		Tags:    tags,
-	}
+	post.ID = id
 
 	if err := updatePost(db, post); err != nil {
 		slog.Error("update post failed", slog.Any("error", err))
@@ -709,19 +673,7 @@ func adminUpdatePostHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func adminDeletePostHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	cookie, _ := r.Cookie("session_token")
-	var token string
-	if cookie != nil {
-		token = cookie.Value
-	}
-	_, isAdmin := validateSession(db, token)
-	if !isAdmin {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	if !requireAdminMutation(w, r) {
 		return
 	}
 
@@ -743,19 +695,7 @@ func adminDeletePostHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func adminMarkMessageReadHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	cookie, _ := r.Cookie("session_token")
-	var token string
-	if cookie != nil {
-		token = cookie.Value
-	}
-	_, isAdmin := validateSession(db, token)
-	if !isAdmin {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	if !requireAdminMutation(w, r) {
 		return
 	}
 
@@ -777,19 +717,7 @@ func adminMarkMessageReadHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func adminDeleteMessageHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	cookie, _ := r.Cookie("session_token")
-	var token string
-	if cookie != nil {
-		token = cookie.Value
-	}
-	_, isAdmin := validateSession(db, token)
-	if !isAdmin {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	if !requireAdminMutation(w, r) {
 		return
 	}
 
@@ -813,6 +741,11 @@ func adminDeleteMessageHandler(w http.ResponseWriter, r *http.Request) {
 func contactHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if !contactLimiter.allow(clientIP(r)) {
+		writeContactAlert(w, http.StatusTooManyRequests, "error", "ph-warning", "Too many messages. Try again later.")
 		return
 	}
 

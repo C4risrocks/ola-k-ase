@@ -67,7 +67,7 @@ func standardMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://unpkg.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'")
 
 		rr := &responseRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 		defer func() {
@@ -86,11 +86,12 @@ func standardMiddleware(next http.Handler) http.Handler {
 				slog.String("request_id", reqID),
 				slog.String("method", r.Method),
 				slog.String("path", r.URL.Path),
-				slog.String("ip", getClientIP(r)),
+				slog.String("remote_addr", r.RemoteAddr),
+				slog.String("forwarded_for", r.Header.Get("X-Forwarded-For")),
 				slog.String("forwarded_proto", r.Header.Get("X-Forwarded-Proto")),
 				slog.Int("status", rr.statusCode),
 				slog.Duration("duration", time.Since(start)),
-				slog.String("user_agent", r.UserAgent()),
+				slog.String("user_agent", truncateLogValue(r.UserAgent(), 256)),
 			)
 		}()
 
@@ -229,13 +230,9 @@ func isCompressible(r *http.Request, header http.Header, statusCode int) bool {
 		(strings.HasPrefix(r.URL.Path, "/static/") && strings.HasSuffix(r.URL.Path, ".css"))
 }
 
-func getClientIP(r *http.Request) string {
-	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
-		parts := strings.Split(ip, ",")
-		return strings.TrimSpace(parts[0])
+func truncateLogValue(value string, limit int) string {
+	if len(value) <= limit {
+		return value
 	}
-	if ip := r.Header.Get("X-Real-IP"); ip != "" {
-		return ip
-	}
-	return r.RemoteAddr
+	return value[:limit]
 }

@@ -11,19 +11,17 @@
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='0' fill='%230a0a0c'/><text x='50' y='66' text-anchor='middle' font-family='monospace' font-size='42' font-weight='700' fill='%230044ff'>CM</text></svg>">
 
     <!-- Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/fonts.css">
 
     <!-- Styles -->
-    <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
-    <link rel="stylesheet" href="/static/css/style.css?v=3.1">
+    <link rel="stylesheet" href="/static/css/phosphor.css">
+    <link rel="stylesheet" href="/static/css/style.css?v=3.2">
 
     <!-- HTMX -->
-    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <script src="/static/js/htmx.min.js"></script>
 
     <!-- Alpine.js -->
-    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
+    <script defer src="/static/js/alpine.min.js"></script>
 </head>
 <body>
     <div id="scroll-sentinel" aria-hidden="true"></div>
@@ -138,153 +136,7 @@
     </footer>
 
     <!-- Alpine.js App -->
-    <script>
-        function portfolio() {
-            return {
-                scrolled: false,
-                mobileMenuOpen: false,
-                postModalOpen: false,
-                loginModalOpen: false,
-                adminPostModalOpen: false,
-                adminDashboardModalOpen: false,
-                adminEditPostModalOpen: false,
-
-                init() {
-                    const updateScrollLock = () => {
-                        const isLocked = this.postModalOpen || this.loginModalOpen || this.adminPostModalOpen || this.adminDashboardModalOpen || this.adminEditPostModalOpen;
-                        if (isLocked) {
-                            document.documentElement.classList.add('modal-open');
-                            document.body.classList.add('modal-open');
-                            document.documentElement.style.overflow = 'hidden';
-                            document.body.style.overflow = 'hidden';
-                        } else {
-                            document.documentElement.classList.remove('modal-open');
-                            document.body.classList.remove('modal-open');
-                            document.documentElement.style.overflow = '';
-                            document.body.style.overflow = '';
-                        }
-                    };
-
-                    this.$watch('postModalOpen', updateScrollLock);
-                    this.$watch('loginModalOpen', updateScrollLock);
-                    this.$watch('adminPostModalOpen', updateScrollLock);
-                    this.$watch('adminDashboardModalOpen', updateScrollLock);
-                    this.$watch('adminEditPostModalOpen', updateScrollLock);
-
-                    const sentinel = document.getElementById('scroll-sentinel');
-                    if (sentinel) {
-                        const scrollObserver = new IntersectionObserver((entries) => {
-                            this.scrolled = !entries[0].isIntersecting;
-                        }, { threshold: 0 });
-                        scrollObserver.observe(sentinel);
-                    }
-
-                    document.addEventListener('click', (e) => {
-                        const link = e.target.closest('a[href^="#"]');
-                        if (link) {
-                            e.preventDefault();
-                            const href = link.getAttribute('href');
-                            if (href === '#') {
-                                window.scrollTo({ top: 0, behavior: 'smooth' });
-                                if (history.pushState) {
-                                    history.pushState(null, null, ' ');
-                                }
-                                return;
-                            }
-                            const target = document.querySelector(href);
-                            if (target) {
-                                if (history.pushState) {
-                                    history.pushState(null, null, href);
-                                }
-                                target.scrollIntoView({ behavior: 'smooth' });
-                            }
-                        }
-                    });
-
-                    const handleInitialHash = () => {
-                        if (window.location.hash && window.location.hash !== '#') {
-                            const target = document.querySelector(window.location.hash);
-                            if (target) {
-                                target.scrollIntoView({ behavior: 'smooth' });
-                            }
-                        }
-                    };
-
-                    if (document.fonts) {
-                        document.fonts.ready.then(handleInitialHash);
-                    } else {
-                        window.addEventListener('load', handleInitialHash);
-                    }
-
-                    // Dynamic background intersection observer
-                    const sections = document.querySelectorAll('[data-theme-color]');
-                    const themeObserver = new IntersectionObserver((entries) => {
-                        entries.forEach(entry => {
-                            if (entry.isIntersecting) {
-                                const color = entry.target.getAttribute('data-theme-color');
-                                document.documentElement.setAttribute('data-bg', color);
-                            }
-                        });
-                    }, { 
-                        rootMargin: '-40% 0px -50% 0px',
-                        threshold: 0
-                    });
-
-                    sections.forEach(sec => themeObserver.observe(sec));
-                    
-                    // Re-run for HTMX injected content if needed
-                    document.body.addEventListener('htmx:afterSwap', (event) => {
-                        if (event.target && event.target.matches('section[hx-get]')) {
-                            event.target.setAttribute('data-loaded', 'true');
-                        }
-                        const newSections = event.target.querySelectorAll('[data-theme-color]');
-                        newSections.forEach(sec => themeObserver.observe(sec));
-                    });
-                }
-            }
-        }
-
-        function showHtmxSectionError(section) {
-            section.innerHTML = '<div class="container"><div class="form__alert form__alert--error" role="alert"><span>[ ERROR LOADING SECTION ]</span><button type="button" class="btn" data-section-retry>RETRY</button></div></div>';
-        }
-
-        function showHtmxContactError(target, html) {
-            target.innerHTML = html || '<div class="form__alert form__alert--error" role="alert">[ ERROR SENDING MESSAGE ]</div>';
-        }
-
-        document.body.addEventListener('htmx:responseError', (event) => {
-            const target = event.detail.target;
-            if (!target) return;
-            if (target.id === 'contact-response') {
-                showHtmxContactError(target, event.detail.xhr && event.detail.xhr.responseText);
-                return;
-            }
-            if (target.matches('section[hx-get]')) {
-                showHtmxSectionError(target);
-            }
-        });
-
-        document.body.addEventListener('htmx:sendError', (event) => {
-            const target = event.detail.target;
-            if (!target) return;
-            if (target.id === 'contact-response') {
-                showHtmxContactError(target);
-                return;
-            }
-            if (target.matches('section[hx-get]')) {
-                showHtmxSectionError(target);
-            }
-        });
-
-        document.addEventListener('click', (event) => {
-            const retry = event.target.closest('[data-section-retry]');
-            if (!retry) return;
-            const section = retry.closest('section[hx-get]');
-            if (section) {
-                htmx.trigger(section, 'revealed');
-            }
-        });
-    </script>
+    <script src="/static/js/app.js"></script>
 
     <!-- Article Modal Overlay -->
     <div class="modal"

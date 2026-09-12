@@ -5,6 +5,8 @@ go 1.23.0
 require (
 	github.com/mattn/go-sqlite3 v1.14.48
 	github.com/prometheus/client_golang v1.23.2
+	golang.org/x/crypto v0.31.0
+	golang.org/x/term v0.28.0
 )
 
 require (

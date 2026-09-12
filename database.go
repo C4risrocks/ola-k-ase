@@ -3,7 +3,9 @@ package main
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -11,10 +13,13 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/crypto/argon2"
 )
 
 type Profile struct {
@@ -77,11 +82,14 @@ type Post struct {
 	ReadingTime string
 }
 
-func initDB(dataSourceName string) (*sql.DB, error) {
-	// Ensure the directory exists
+func openDB(dataSourceName string) (*sql.DB, error) {
+	// Ensure the directory exists and is only accessible to the service user.
 	dir := filepath.Dir(dataSourceName)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		return nil, fmt.Errorf("secure data directory: %w", err)
 	}
 
 	db, err := sql.Open("sqlite3", dataSourceName)
@@ -109,6 +117,20 @@ func initDB(dataSourceName string) (*sql.DB, error) {
 		return nil, fmt.Errorf("configure sqlite pragmas: %w", err)
 	}
 
+	if err := os.Chmod(dataSourceName, 0600); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("secure database file: %w", err)
+	}
+
+	return db, nil
+}
+
+func initDB(dataSourceName string) (*sql.DB, error) {
+	db, err := openDB(dataSourceName)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := applyMigrations(db); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -120,11 +142,6 @@ func initDB(dataSourceName string) (*sql.DB, error) {
 	}
 
 	if err := seedPosts(db); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
-
-	if err := seedAdminUser(db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -484,27 +501,183 @@ func getPostBySlug(db *sql.DB, slug string) (Post, error) {
 	return p, nil
 }
 
-func hashPassword(password string, salt string) string {
-	hash := sha256.Sum256([]byte(salt + password + "cmoreno_secret_salt"))
-	return hex.EncodeToString(hash[:])
+const (
+	minAdminPasswordLength = 12
+	maxAdminPasswordLength = 128
+
+	argon2IDMemory      = 64 * 1024
+	argon2IDIterations  = 3
+	argon2IDParallelism = 2
+	argon2IDSaltLength  = 16
+	argon2IDKeyLength   = 32
+
+	argon2IDMinMemory      = 8 * 1024
+	argon2IDMaxMemory      = 256 * 1024
+	argon2IDMinIterations  = 1
+	argon2IDMaxIterations  = 10
+	argon2IDMinParallelism = 1
+	argon2IDMaxParallelism = 8
+	argon2IDMinSaltLength  = 8
+	argon2IDMaxSaltLength  = 64
+	argon2IDMinKeyLength   = 16
+	argon2IDMaxKeyLength   = 64
+)
+
+type argon2IDParams struct {
+	memory      uint32
+	iterations  uint32
+	parallelism uint8
 }
 
-func seedAdminUser(db *sql.DB) error {
-	var count int
-	if err := db.QueryRow("SELECT COUNT(*) FROM admin_users").Scan(&count); err != nil {
-		return fmt.Errorf("count admin_users: %w", err)
+func validateAdminPassword(password string) error {
+	if utf8.RuneCountInString(password) < minAdminPasswordLength {
+		return fmt.Errorf("password must be at least %d characters", minAdminPasswordLength)
 	}
-	if count > 0 {
-		return nil
+	if len(password) > maxAdminPasswordLength {
+		return fmt.Errorf("password must be at most %d bytes", maxAdminPasswordLength)
+	}
+	return nil
+}
+
+func hashPassword(password string) (string, error) {
+	salt := make([]byte, argon2IDSaltLength)
+	if _, err := rand.Read(salt); err != nil {
+		return "", fmt.Errorf("generate password salt: %w", err)
 	}
 
-	salt := "static_portfolio_salt"
-	hash := hashPassword("admin123", salt)
+	key := argon2.IDKey([]byte(password), salt, argon2IDIterations, argon2IDMemory, argon2IDParallelism, argon2IDKeyLength)
 
-	_, err := db.Exec("INSERT INTO admin_users (username, password_hash) VALUES (?, ?)", "admin", salt+":"+hash)
+	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
+		argon2.Version,
+		argon2IDMemory,
+		argon2IDIterations,
+		argon2IDParallelism,
+		base64.RawStdEncoding.EncodeToString(salt),
+		base64.RawStdEncoding.EncodeToString(key),
+	), nil
+}
+
+func parsePasswordHash(encoded string) (argon2IDParams, []byte, []byte, error) {
+	var params argon2IDParams
+
+	parts := strings.Split(encoded, "$")
+	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" {
+		return params, nil, nil, fmt.Errorf("unsupported password hash format")
+	}
+
+	version, err := strconv.Atoi(strings.TrimPrefix(parts[2], "v="))
+	if err != nil || version != argon2.Version {
+		return params, nil, nil, fmt.Errorf("unsupported argon2 version")
+	}
+
+	values := strings.Split(parts[3], ",")
+	if len(values) != 3 {
+		return params, nil, nil, fmt.Errorf("invalid argon2 parameters")
+	}
+
+	memory, err := parseArgon2Parameter(values[0], "m=")
 	if err != nil {
-		return fmt.Errorf("seed admin user: %w", err)
+		return params, nil, nil, err
 	}
+	iterations, err := parseArgon2Parameter(values[1], "t=")
+	if err != nil {
+		return params, nil, nil, err
+	}
+	parallelism, err := parseArgon2Parameter(values[2], "p=")
+	if err != nil {
+		return params, nil, nil, err
+	}
+
+	if memory < argon2IDMinMemory || memory > argon2IDMaxMemory {
+		return params, nil, nil, fmt.Errorf("argon2 memory out of range")
+	}
+	if iterations < argon2IDMinIterations || iterations > argon2IDMaxIterations {
+		return params, nil, nil, fmt.Errorf("argon2 iterations out of range")
+	}
+	if parallelism < argon2IDMinParallelism || parallelism > argon2IDMaxParallelism {
+		return params, nil, nil, fmt.Errorf("argon2 parallelism out of range")
+	}
+	params.memory = uint32(memory)
+	params.iterations = uint32(iterations)
+	params.parallelism = uint8(parallelism)
+
+	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
+	if err != nil {
+		return params, nil, nil, fmt.Errorf("decode password salt: %w", err)
+	}
+	key, err := base64.RawStdEncoding.DecodeString(parts[5])
+	if err != nil {
+		return params, nil, nil, fmt.Errorf("decode password key: %w", err)
+	}
+	if len(salt) < argon2IDMinSaltLength || len(salt) > argon2IDMaxSaltLength {
+		return params, nil, nil, fmt.Errorf("password salt length out of range")
+	}
+	if len(key) < argon2IDMinKeyLength || len(key) > argon2IDMaxKeyLength {
+		return params, nil, nil, fmt.Errorf("password key length out of range")
+	}
+
+	return params, salt, key, nil
+}
+
+func parseArgon2Parameter(value, prefix string) (uint64, error) {
+	raw, ok := strings.CutPrefix(value, prefix)
+	if !ok || raw == "" {
+		return 0, fmt.Errorf("invalid argon2 parameter %q", value)
+	}
+	parsed, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("invalid argon2 parameter %q: %w", value, err)
+	}
+	return parsed, nil
+}
+
+func verifyPassword(encoded, password string) bool {
+	params, salt, key, err := parsePasswordHash(encoded)
+	if err != nil {
+		return false
+	}
+
+	computed := argon2.IDKey([]byte(password), salt, params.iterations, params.memory, params.parallelism, uint32(len(key)))
+	return subtle.ConstantTimeCompare(computed, key) == 1
+}
+
+func setAdminPassword(db *sql.DB, username, password string) error {
+	if err := validateAdminPassword(password); err != nil {
+		return err
+	}
+
+	encoded, err := hashPassword(password)
+	if err != nil {
+		return err
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin admin password update: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.Exec(`
+		INSERT INTO admin_users (username, password_hash) VALUES (?, ?)
+		ON CONFLICT(username) DO UPDATE SET password_hash = excluded.password_hash`,
+		username, encoded); err != nil {
+		return fmt.Errorf("upsert admin user: %w", err)
+	}
+
+	if _, err := tx.Exec("DELETE FROM sessions"); err != nil {
+		return fmt.Errorf("invalidate sessions: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit admin password update: %w", err)
+	}
+	committed = true
+
 	return nil
 }
 
@@ -514,49 +687,135 @@ func authenticateAdmin(db *sql.DB, username, password string) bool {
 	if err != nil {
 		return false
 	}
-	parts := strings.Split(stored, ":")
-	if len(parts) != 2 {
-		return false
-	}
-	salt := parts[0]
-	expectedHash := parts[1]
-	return hashPassword(password, salt) == expectedHash
+	return verifyPassword(stored, password)
 }
 
-func createSession(db *sql.DB, username string) (string, error) {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	token := hex.EncodeToString(b)
-	expiresAt := time.Now().Add(24 * time.Hour).Format(time.RFC3339)
-
-	_, err := db.Exec("INSERT INTO sessions (id, username, expires_at) VALUES (?, ?, ?)", token, username, expiresAt)
+func hasSecureAdmin(db *sql.DB) (bool, error) {
+	rows, err := db.Query("SELECT password_hash FROM admin_users")
 	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	total := 0
+	valid := 0
+	for rows.Next() {
+		var encoded string
+		if err := rows.Scan(&encoded); err != nil {
+			return false, err
+		}
+		total++
+		if _, _, _, err := parsePasswordHash(encoded); err == nil {
+			valid++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+
+	return total > 0 && valid == total, nil
+}
+
+const (
+	sessionTokenBytes = 32
+	sessionTTL        = 24 * time.Hour
+)
+
+func randomToken() (string, error) {
+	raw := make([]byte, sessionTokenBytes)
+	if _, err := rand.Read(raw); err != nil {
 		return "", err
 	}
-	return token, nil
+	return hex.EncodeToString(raw), nil
+}
+
+func hashSessionToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+type sessionRecord struct {
+	Username string
+	CSRFHash string
+}
+
+func createSession(db *sql.DB, username string) (string, string, error) {
+	token, err := randomToken()
+	if err != nil {
+		return "", "", fmt.Errorf("generate session token: %w", err)
+	}
+	csrfToken, err := randomToken()
+	if err != nil {
+		return "", "", fmt.Errorf("generate csrf token: %w", err)
+	}
+
+	now := time.Now().UTC()
+	tx, err := db.Begin()
+	if err != nil {
+		return "", "", fmt.Errorf("begin session transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err := tx.Exec("DELETE FROM sessions WHERE expires_at < ?", now.Format(time.RFC3339)); err != nil {
+		return "", "", fmt.Errorf("cleanup expired sessions: %w", err)
+	}
+
+	if _, err := tx.Exec("INSERT INTO sessions (id, username, expires_at, csrf_hash) VALUES (?, ?, ?, ?)",
+		hashSessionToken(token), username, now.Add(sessionTTL).Format(time.RFC3339), hashSessionToken(csrfToken)); err != nil {
+		return "", "", fmt.Errorf("insert session: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", "", fmt.Errorf("commit session: %w", err)
+	}
+	committed = true
+
+	return token, csrfToken, nil
+}
+
+func lookupSession(db *sql.DB, token string) (sessionRecord, bool) {
+	if token == "" {
+		return sessionRecord{}, false
+	}
+
+	var record sessionRecord
+	var expiresAtStr string
+	err := db.QueryRow(`
+		SELECT s.username, s.expires_at, s.csrf_hash
+		FROM sessions s
+		JOIN admin_users a ON a.username = s.username
+		WHERE s.id = ?`, hashSessionToken(token)).Scan(&record.Username, &expiresAtStr, &record.CSRFHash)
+	if err != nil {
+		return sessionRecord{}, false
+	}
+
+	expiresAt, err := time.Parse(time.RFC3339, expiresAtStr)
+	if err != nil || time.Now().After(expiresAt) {
+		_, _ = db.Exec("DELETE FROM sessions WHERE id = ?", hashSessionToken(token))
+		return sessionRecord{}, false
+	}
+	return record, true
 }
 
 func validateSession(db *sql.DB, token string) (string, bool) {
-	if token == "" {
-		return "", false
+	record, ok := lookupSession(db, token)
+	return record.Username, ok
+}
+
+func csrfMatches(record sessionRecord, csrfToken string) bool {
+	if csrfToken == "" || record.CSRFHash == "" {
+		return false
 	}
-	var username, expiresAtStr string
-	err := db.QueryRow("SELECT username, expires_at FROM sessions WHERE id = ?", token).Scan(&username, &expiresAtStr)
-	if err != nil {
-		return "", false
-	}
-	expiresAt, err := time.Parse(time.RFC3339, expiresAtStr)
-	if err != nil || time.Now().After(expiresAt) {
-		_ = deleteSession(db, token)
-		return "", false
-	}
-	return username, true
+	return subtle.ConstantTimeCompare([]byte(hashSessionToken(csrfToken)), []byte(record.CSRFHash)) == 1
 }
 
 func deleteSession(db *sql.DB, token string) error {
-	_, err := db.Exec("DELETE FROM sessions WHERE id = ?", token)
+	_, err := db.Exec("DELETE FROM sessions WHERE id = ?", hashSessionToken(token))
 	return err
 }
 

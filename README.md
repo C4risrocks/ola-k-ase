@@ -64,12 +64,14 @@ sudo chown -R 10001:10001 data
 ## Comandos
 
 ```bash
-make run       # servidor local
-make build     # binario con build info
-make test      # tests con race detector
-make lint      # golangci-lint
-make docker    # build BuildKit con imagen local
-make clean     # elimina únicamente binarios locales
+make run         # servidor local
+make build       # binario con build info
+make test        # tests con race detector
+make lint        # golangci-lint local
+make lint-docker # golangci-lint v1.62.2 mediante Docker (sin instalación global)
+make vuln        # govulncheck
+make docker      # build BuildKit con imagen local
+make clean       # elimina únicamente binarios locales
 ```
 
 También se recomienda ejecutar:
@@ -120,11 +122,13 @@ Los assets estáticos (`css`, `js`, `svg`, imágenes y fuentes) usan caché inmu
 Cache-Control: no-cache
 ```
 
-El servidor añade `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy` y `Content-Security-Policy`.
+HTMX, Alpine.js, Phosphor Icons y las fuentes están vendorizados en `static/` y embebidos en el binario; no se carga ningún recurso externo. El servidor añade `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy` y una `Content-Security-Policy` con `default-src 'self'` y `script-src 'self' 'unsafe-eval'`. `unsafe-eval` sigue siendo necesario por el build estándar de Alpine.js; su eliminación requiere migrar a la build CSP-compatible.
+
+Las sesiones se guardan en SQLite únicamente como hash SHA-256 del token; el token en claro solo existe en una cookie `HttpOnly`, `SameSite=Lax` y `Secure` en producción. Todas las mutaciones administrativas requieren `Origin`/`Referer` válido y el header `X-CSRF-Token` (que HTMX añade automáticamente desde la cookie `csrf_token`). Login y contacto tienen rate limiting en memoria por IP directa.
 
 ## SQLite y migraciones
 
-La aplicación crea automáticamente el directorio de la base de datos y aplica las migraciones embebidas en orden. SQLite usa:
+La aplicación crea automáticamente el directorio de la base de datos con permisos `0700` y el archivo con `0600`, y aplica las migraciones embebidas en orden. SQLite usa:
 
 - `journal_mode=WAL`
 - `synchronous=NORMAL`
@@ -132,7 +136,23 @@ La aplicación crea automáticamente el directorio de la base de datos y aplica 
 - `busy_timeout=5000`
 - un único connection slot para evitar conflictos de escritura en `database/sql`
 
-No se debe editar una migración ya aplicada. Añade una nueva migración numerada.
+No se debe editar una migración ya aplicada. Añade una nueva migración numerada. La migración `005_security_hardening.sql` invalida las sesiones existentes: tras actualizar a esta versión hay que iniciar sesión de nuevo.
+
+## Administrador
+
+No existe ninguna credencial por defecto. El administrador se crea o actualiza con:
+
+```bash
+go run . admin set-password --username admin
+```
+
+El comando usa `DATABASE_PATH` (default `/data/site.db`), solicita la contraseña de forma oculta, la confirma, guarda un hash Argon2id y revoca todas las sesiones activas. La contraseña debe tener al menos 12 caracteres y como máximo 128 bytes. Para entornos sin terminal interactiva:
+
+```bash
+./portfolio admin set-password --username admin --password-stdin < /ruta/segura/password.txt
+```
+
+Con `APP_ENV=production` el servicio no arranca si no existe un administrador con hash Argon2id; en desarrollo solo registra una advertencia. Los hashes SHA-256 de versiones anteriores dejan de ser válidos y deben rotarse con este comando.
 
 ## Despliegue en Coolify
 
@@ -141,9 +161,24 @@ No se debe editar una migración ya aplicada. Añade una nueva migración numera
 3. Mantener `PORT` con el valor que Coolify exponga al contenedor.
 4. Crear un volumen persistente montado exactamente en `/data`.
 5. Definir `APP_ENV=production` y `LOG_LEVEL=info`.
-6. Configurar el healthcheck del recurso usando `/health` o dejar que Coolify utilice el `HEALTHCHECK` de la imagen.
+6. Antes del primer arranque, provisionar el administrador contra el mismo volumen (los argumentos tras la imagen son el subcomando del binario):
+   ```bash
+   docker run --rm -it -v <volumen>:/data portfolio:latest admin set-password --username admin
+   ```
+7. Configurar el healthcheck del recurso usando `/health` o dejar que Coolify utilice el `HEALTHCHECK` de la imagen.
 
-La aplicación respeta `X-Forwarded-For` y `X-Forwarded-Proto` para operación detrás del proxy y no asume HTTPS ni realiza redirects automáticos.
+La aplicación no asume HTTPS ni realiza redirects automáticos. Los headers `X-Forwarded-*` solo se registran como información no confiable; el rate limiting usa la dirección directa (`RemoteAddr`), por lo que debe aplicarse en Traefik si se necesita limitar por IP real.
+
+### Endurecimiento en Traefik
+
+Aplicar HSTS en el proxy y proteger `/metrics` con allowlist o autenticación básica, sin tocar la aplicación:
+
+```yaml
+# Ejemplo de middlewares de Traefik
+- "traefik.http.middlewares.portfolio-headers.headers.stsSeconds=31536000"
+- "traefik.http.middlewares.portfolio-headers.headers.stsIncludeSubdomains=true"
+- "traefik.http.middlewares.metrics-allow.ipallowlist.sourcerange=10.0.0.0/8"
+```
 
 ## Backups
 
@@ -161,6 +196,14 @@ Para un backup consistente, detén temporalmente el servicio o utiliza una copia
 
 Las migraciones pendientes se aplican automáticamente durante el arranque.
 
+## Privacidad y logs
+
+Los logs estructurados registran método, ruta, estado, duración, `RemoteAddr`, los headers `X-Forwarded-*` (no confiables, solo informativos) y un user-agent truncado a 256 caracteres. No se registran contraseñas, tokens de sesión ni tokens CSRF.
+
+- Define una retención corta para logs (por ejemplo, 7-30 días) en el colector o en Coolify.
+- Los mensajes de contacto viven únicamente en `/data/site.db`; elimínalos desde el panel cuando dejen de ser necesarios.
+- No expongas `/metrics` ni los logs a redes públicas.
+
 ## Troubleshooting
 
 ### `database is locked`
@@ -171,6 +214,14 @@ Verifica que solo exista una instancia escribiendo en el mismo volumen SQLite, q
 
 Revisa permisos del volumen, existencia de `/data` y el valor de `DATABASE_PATH`.
 
+### El arranque falla con `secure data directory` o `secure database file`
+
+El proceso aplica permisos `0700` a `/data` y `0600` a la base de datos, por lo que necesita ser propietario del volumen. En Linux:
+
+```bash
+sudo chown -R 10001:10001 data
+```
+
 ### El contenedor no pasa el healthcheck
 
 Confirma que `PORT` coincida con el puerto interno usado por Coolify y que `/health` responda dentro de cinco segundos.
@@ -178,6 +229,10 @@ Confirma que `PORT` coincida con el puerto interno usado por Coolify y que `/hea
 ### Cambios HTML no aparecen
 
 El HTML usa `Cache-Control: no-cache`. Verifica el despliegue y revisa `/version`; los assets tienen ETags basados en contenido.
+
+### `403` al iniciar sesión o ejecutar acciones de administración
+
+`Origin`/`Referer` deben coincidir con el `Host` recibido. Si Traefik reescribe el `Host` hacia un nombre interno, configura el servicio para preservar el host original del cliente.
 
 ## Previews
 

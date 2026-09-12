@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
-ARG GO_VERSION=1.23
-FROM golang:${GO_VERSION}-bookworm AS builder
+
+# Base images pinned by digest; update deliberately after testing.
+FROM golang:1.23-bookworm@sha256:167053a2bb901972bf2c1611f8f52c44d5fe7e762e5cab213708d82c421614db AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev && rm -rf /var/lib/apt/lists/*
 
@@ -30,7 +31,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     -o portfolio .
 
 # Final lightweight image
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 
 ARG VERSION="dev"
 ARG COMMIT="none"

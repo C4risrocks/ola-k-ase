@@ -1,4 +1,4 @@
-.PHONY: run build test lint docker clean
+.PHONY: run build test lint lint-docker vuln docker clean
 
 VERSION ?= $(shell git describe --tags --always --dirty || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD || echo "none")
@@ -22,6 +22,14 @@ test:
 lint:
 	@echo "Running golangci-lint..."
 	golangci-lint run ./...
+
+lint-docker:
+	@echo "Running golangci-lint in Docker..."
+	docker run --rm -v "$$(pwd)":/app -w /app golangci/golangci-lint:v1.62.2 golangci-lint run ./...
+
+vuln:
+	@echo "Running govulncheck..."
+	go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
 docker:
 	@echo "Building Docker image..."
