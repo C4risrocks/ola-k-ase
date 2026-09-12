@@ -12,21 +12,21 @@ Guía operativa del repositorio `ola-k-ase` (portafolio cmoreno.org). Es complem
 - `main.go`: arranque, rutas, templates, handlers, endpoints operativos y graceful shutdown.
 - `admin_command.go`: subcomando `admin set-password` (Argon2id, sin credenciales por defecto).
 - `security.go`: validación de origen, guardia CSRF, cookies de sesión y CSRF.
-- `ratelimit.go`: rate limiting en memoria por `RemoteAddr` y `clientIP`.
+- `ratelimit.go`: rate limiting en memoria; `clientIP` usa `RemoteAddr` y la última entrada de `X-Forwarded-For` solo si el peer directo es loopback o privado.
 - `post_form.go`: validación de posts, tags y slugs.
 - `database.go`: conexión SQLite, migraciones, seeds, auth, sesiones y acceso a datos.
 - `middleware.go`: recovery, request ID, logs, headers de seguridad, gzip, caché y ETags.
 - `config.go`: `PORT`, `DATABASE_PATH`, `APP_ENV`, `LOG_LEVEL`.
 - `migrations/`: SQL embebido, append-only.
 - `templates/`: `index.html` y partials HTMX.
-- `static/`: CSS e imágenes embebidas.
+- `static/`: CSS, JavaScript y fuentes embebidos.
 - `main_test.go`: tests de integración con SQLite temporal y `httptest`.
 
 ## Stack inmutable
 
 - Go y `net/http` estándar, sin frameworks de routing.
 - SQLite con `github.com/mattn/go-sqlite3` (CGO habilitado solo en el builder).
-- HTMX y Alpine.js desde CDN; sin bundlers, npm ni SPA.
+- HTMX y Alpine.js vendorizados en `static/`; sin bundlers, npm, CDNs ni SPA.
 - Templates, CSS e imágenes embebidos con `//go:embed`.
 
 ## Contratos HTMX/Alpine (no romper)
@@ -52,7 +52,7 @@ Guía operativa del repositorio `ola-k-ase` (portafolio cmoreno.org). Es complem
 - No reintroducir hashes SHA-256 propios; `parsePasswordHash` solo acepta Argon2id con parámetros dentro de rango.
 - Las sesiones se almacenan solo como hash SHA-256; nunca persistir tokens en claro. `createSession` devuelve `(token, csrfToken)`.
 - Toda mutación administrativa pasa por `requireAdminMutation` (método, `Origin`/`Referer`, sesión y `X-CSRF-Token`).
-- No confiar en `X-Forwarded-*` para seguridad ni rate limiting; usar `RemoteAddr` vía `clientIP`.
+- No confiar en `X-Forwarded-*` para seguridad. En rate limiting, `clientIP` solo acepta la última entrada de `X-Forwarded-For` si el peer directo es loopback o privado; nunca confiar en entradas anteriores.
 - Respetar los límites de body y de campos de `main.go`, `post_form.go` y `ratelimit.go`.
 - Los assets frontend están vendorizados en `static/`; no reintroducir CDNs ni ampliar `script-src` con `'unsafe-inline'`. `unsafe-eval` sigue pendiente de la build CSP de Alpine.
 - `/data` debe quedar en `0700` y la base en `0600`; el arranque falla si no se pueden aplicar.

@@ -898,6 +898,67 @@ func TestContactRateLimited(t *testing.T) {
 	}
 }
 
+func TestClientIPResolvesForwardedClientBehindLocalProxy(t *testing.T) {
+	cases := []struct {
+		name       string
+		remoteAddr string
+		forwarded  []string
+		want       string
+	}{
+		{name: "private peer uses forwarded", remoteAddr: "10.0.0.5:4321", forwarded: []string{"203.0.113.7"}, want: "203.0.113.7"},
+		{name: "multiple entries use rightmost", remoteAddr: "172.17.0.2:4321", forwarded: []string{"198.51.100.9, 203.0.113.7"}, want: "203.0.113.7"},
+		{name: "loopback peer strips forwarded port", remoteAddr: "127.0.0.1:4321", forwarded: []string{"203.0.113.7:5555"}, want: "203.0.113.7"},
+		{name: "public peer ignores forwarded", remoteAddr: "203.0.113.50:4321", forwarded: []string{"10.0.0.1"}, want: "203.0.113.50"},
+		{name: "private peer without forwarded", remoteAddr: "10.0.0.5:4321", want: "10.0.0.5"},
+		{name: "invalid forwarded falls back to peer", remoteAddr: "10.0.0.5:4321", forwarded: []string{"not-an-ip"}, want: "10.0.0.5"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/login", nil)
+			req.RemoteAddr = tc.remoteAddr
+			for _, value := range tc.forwarded {
+				req.Header.Add("X-Forwarded-For", value)
+			}
+			if got := clientIP(req); got != tc.want {
+				t.Fatalf("clientIP = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoginRateLimitSeparatesProxyClients(t *testing.T) {
+	db := setupTestApp(t)
+
+	if err := setAdminPassword(db, "admin", "a-very-secure-password"); err != nil {
+		t.Fatalf("setAdminPassword: %v", err)
+	}
+
+	form := url.Values{"username": {"admin"}, "password": {"wrong-password"}}
+	attempt := func(client string) int {
+		req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Origin", "http://example.com")
+		req.RemoteAddr = "10.0.0.5:4321"
+		req.Header.Set("X-Forwarded-For", client)
+		rr := httptest.NewRecorder()
+		loginHandler(rr, req)
+		return rr.Code
+	}
+
+	for attemptNum := 0; attemptNum < 5; attemptNum++ {
+		if code := attempt("203.0.113.7"); code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d status = %d, want %d", attemptNum, code, http.StatusUnauthorized)
+		}
+	}
+	if code := attempt("203.0.113.7"); code != http.StatusTooManyRequests {
+		t.Fatalf("same client status = %d, want %d", code, http.StatusTooManyRequests)
+	}
+	if code := attempt("203.0.113.8"); code != http.StatusUnauthorized {
+		t.Fatalf("different client status = %d, want %d", code, http.StatusUnauthorized)
+	}
+}
+
 func TestSessionTokenIsHashedAtRest(t *testing.T) {
 	db := setupTestApp(t)
 

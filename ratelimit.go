@@ -3,12 +3,13 @@ package main
 import (
 	"net"
 	"net/http"
+	"net/netip"
+	"strings"
 	"sync"
 	"time"
 )
 
-// rateLimiter is a small in-memory fixed-window limiter. It keys on the direct
-// peer address only: X-Forwarded-For is never trusted for rate limiting.
+// rateLimiter is a small in-memory fixed-window limiter.
 type rateLimiter struct {
 	mu       sync.Mutex
 	attempts map[string][]time.Time
@@ -60,12 +61,52 @@ func (l *rateLimiter) reset() {
 	l.attempts = make(map[string][]time.Time)
 }
 
+// clientIP returns the address used as the rate limiting key. The direct peer
+// is used for public clients. When the peer is loopback, private or link-local
+// (a local reverse proxy such as Traefik), the rightmost X-Forwarded-For entry
+// is used instead: it is the address the trusted proxy observed, while earlier
+// entries are client-controlled and never trusted.
 func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	peer := peerIP(r.RemoteAddr)
+	peerAddr, err := netip.ParseAddr(peer)
+	if err != nil || !isLocalPeer(peerAddr) {
+		return peer
+	}
+	if forwarded := rightmostForwardedFor(r.Header.Values("X-Forwarded-For")); forwarded != "" {
+		return forwarded
+	}
+	return peer
+}
+
+func peerIP(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		return remoteAddr
 	}
 	return host
+}
+
+func isLocalPeer(addr netip.Addr) bool {
+	return addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast()
+}
+
+func rightmostForwardedFor(values []string) string {
+	parts := strings.Split(strings.Join(values, ","), ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		candidate := strings.TrimSpace(parts[i])
+		if candidate == "" {
+			continue
+		}
+		if host, _, err := net.SplitHostPort(candidate); err == nil {
+			candidate = host
+		}
+		parsed, err := netip.ParseAddr(candidate)
+		if err != nil {
+			return ""
+		}
+		return parsed.Unmap().String()
+	}
+	return ""
 }
 
 var (

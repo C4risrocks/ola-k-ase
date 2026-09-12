@@ -124,7 +124,7 @@ Cache-Control: no-cache
 
 HTMX, Alpine.js, Phosphor Icons y las fuentes están vendorizados en `static/` y embebidos en el binario; no se carga ningún recurso externo. El servidor añade `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy` y una `Content-Security-Policy` con `default-src 'self'` y `script-src 'self' 'unsafe-eval'`. `unsafe-eval` sigue siendo necesario por el build estándar de Alpine.js; su eliminación requiere migrar a la build CSP-compatible.
 
-Las sesiones se guardan en SQLite únicamente como hash SHA-256 del token; el token en claro solo existe en una cookie `HttpOnly`, `SameSite=Lax` y `Secure` en producción. Todas las mutaciones administrativas requieren `Origin`/`Referer` válido y el header `X-CSRF-Token` (que HTMX añade automáticamente desde la cookie `csrf_token`). Login y contacto tienen rate limiting en memoria por IP directa.
+Las sesiones se guardan en SQLite únicamente como hash SHA-256 del token; el token en claro solo existe en una cookie `HttpOnly`, `SameSite=Lax` y `Secure` en producción. Todas las mutaciones administrativas requieren `Origin`/`Referer` válido y el header `X-CSRF-Token` (que HTMX añade automáticamente desde la cookie `csrf_token`). Login y contacto tienen rate limiting en memoria. Si la conexión directa llega desde un proxy local (loopback o rango privado, como Traefik), se usa la última entrada de `X-Forwarded-For`; las entradas anteriores nunca se confían. `app.js` se sirve con versión en la URL (`?v=`) para que la caché inmutable no mezcle despliegues.
 
 ## SQLite y migraciones
 
@@ -143,7 +143,7 @@ No se debe editar una migración ya aplicada. Añade una nueva migración numera
 No existe ninguna credencial por defecto. El administrador se crea o actualiza con:
 
 ```bash
-go run . admin set-password --username admin
+DATABASE_PATH=./data/site.db go run . admin set-password --username admin
 ```
 
 El comando usa `DATABASE_PATH` (default `/data/site.db`), solicita la contraseña de forma oculta, la confirma, guarda un hash Argon2id y revoca todas las sesiones activas. La contraseña debe tener al menos 12 caracteres y como máximo 128 bytes. Para entornos sin terminal interactiva:
@@ -167,7 +167,7 @@ Con `APP_ENV=production` el servicio no arranca si no existe un administrador co
    ```
 7. Configurar el healthcheck del recurso usando `/health` o dejar que Coolify utilice el `HEALTHCHECK` de la imagen.
 
-La aplicación no asume HTTPS ni realiza redirects automáticos. Los headers `X-Forwarded-*` solo se registran como información no confiable; el rate limiting usa la dirección directa (`RemoteAddr`), por lo que debe aplicarse en Traefik si se necesita limitar por IP real.
+La aplicación no asume HTTPS ni realiza redirects automáticos. Los headers `X-Forwarded-*` se registran como información no confiable. Para el rate limiting, la app usa `RemoteAddr` y solo acepta la última entrada de `X-Forwarded-For` cuando el peer directo es loopback o una dirección privada (el proxy local). Configurar además un middleware de rate limiting en Traefik como defensa en profundidad.
 
 ### Endurecimiento en Traefik
 
