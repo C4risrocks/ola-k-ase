@@ -140,7 +140,7 @@
             if (!retry) return;
             const section = retry.closest('section[hx-get]');
             if (section) {
-                htmx.trigger(section, 'revealed');
+                htmx.ajax('GET', section.getAttribute('hx-get'), { target: section, swap: 'innerHTML' });
             }
         });
 

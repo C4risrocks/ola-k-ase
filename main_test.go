@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -1211,5 +1213,71 @@ func TestContentSecurityPolicyIsSelfHosted(t *testing.T) {
 	}
 	if !strings.Contains(csp, "script-src 'self' 'unsafe-eval'") {
 		t.Fatalf("unexpected script-src in CSP: %s", csp)
+	}
+}
+
+func TestDashboardContentRefreshesOnMessageUpdated(t *testing.T) {
+	setupTestApp(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	indexHandler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("index status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	contract := regexp.MustCompile(`<div id="admin-dashboard-content"[^>]*hx-get="/api/admin/dashboard"[^>]*hx-trigger="messageUpdated from:body"[^>]*hx-swap="innerHTML">`)
+	if !contract.MatchString(rr.Body.String()) {
+		t.Fatalf("#admin-dashboard-content missing messageUpdated refresh contract: %q", rr.Body.String())
+	}
+}
+
+func TestReadMessageButtonUsesSinglePostRequest(t *testing.T) {
+	db := setupTestApp(t)
+	token, _ := createTestSession(t, db)
+
+	if _, err := db.Exec("INSERT INTO contact_messages (name, email, message) VALUES ('Jane Doe', 'jane@example.com', 'Hello')"); err != nil {
+		t.Fatalf("insert contact_message: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/admin/dashboard", nil)
+	req.AddCookie(&http.Cookie{Name: "session_token", Value: token})
+	rr := httptest.NewRecorder()
+	adminDashboardHandler(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("dashboard status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	button := regexp.MustCompile(`<button[^>]*hx-post="/api/admin/messages/read/[0-9]+"[^>]*>`).FindString(rr.Body.String())
+	if button == "" {
+		t.Fatalf("read button not found in dashboard: %q", rr.Body.String())
+	}
+	if !strings.Contains(button, `hx-swap="none"`) {
+		t.Fatalf("read button must use hx-swap=\"none\": %q", button)
+	}
+	for _, forbidden := range []string{"hx-get=", "hx-target="} {
+		if strings.Contains(button, forbidden) {
+			t.Fatalf("read button must not declare %s: %q", forbidden, button)
+		}
+	}
+}
+
+func TestSectionRetryUsesHtmxAjax(t *testing.T) {
+	script, err := fs.ReadFile(embeddedFS, "static/js/app.js")
+	if err != nil {
+		t.Fatalf("read app.js: %v", err)
+	}
+	js := string(script)
+
+	if !strings.Contains(js, "htmx.ajax('GET'") {
+		t.Fatal("section retry must reload via htmx.ajax")
+	}
+	if strings.Contains(js, "htmx.trigger(section") {
+		t.Fatal("section retry must not rely on htmx.trigger for hx-trigger=\"none\" sections")
+	}
+	if !strings.Contains(js, "data-section-retry") {
+		t.Fatal("retry button hook missing from app.js")
 	}
 }

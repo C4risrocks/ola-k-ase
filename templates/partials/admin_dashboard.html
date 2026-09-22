@@ -131,9 +131,7 @@
                                 <button type="button" 
                                         class="btn btn--sm" 
                                         hx-post="/api/admin/messages/read/{{ .ID }}" 
-                                        hx-target="#admin-dashboard-content" 
-                                        hx-get="/api/admin/dashboard" 
-                                        hx-swap="innerHTML">
+                                        hx-swap="none">
                                     [ READ ]
                                 </button>
                                 {{ end }}

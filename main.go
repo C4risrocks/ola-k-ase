@@ -261,12 +261,7 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 		slog.Error("db error getting posts", slog.Any("error", err))
 	}
 
-	cookie, _ := r.Cookie("session_token")
-	var token string
-	if cookie != nil {
-		token = cookie.Value
-	}
-	_, isAdmin := validateSession(db, token)
+	_, isAdmin := validateSession(db, sessionTokenFromRequest(r))
 
 	educationData := struct {
 		Education []Education
@@ -339,12 +334,7 @@ func sectionHandler(w http.ResponseWriter, r *http.Request) {
 	case "writing":
 		var posts []Post
 		posts, err = getPosts(db)
-		cookie, _ := r.Cookie("session_token")
-		var token string
-		if cookie != nil {
-			token = cookie.Value
-		}
-		_, isAdmin := validateSession(db, token)
+		_, isAdmin := validateSession(db, sessionTokenFromRequest(r))
 		data = struct {
 			Posts   []Post
 			IsAdmin bool
@@ -416,18 +406,18 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !sameOriginRequest(r) {
-		writeLoginAlert(w, http.StatusForbidden, "error", "Request rejected.")
+		writeFormAlert(w, http.StatusForbidden, "error", "Request rejected.")
 		return
 	}
 
 	if !loginLimiter.allow(clientIP(r)) {
-		writeLoginAlert(w, http.StatusTooManyRequests, "error", "Too many attempts. Try again later.")
+		writeFormAlert(w, http.StatusTooManyRequests, "error", "Too many attempts. Try again later.")
 		return
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxLoginBodyBytes)
 	if err := r.ParseForm(); err != nil {
-		writeLoginAlert(w, http.StatusBadRequest, "error", "Invalid form data.")
+		writeFormAlert(w, http.StatusBadRequest, "error", "Invalid form data.")
 		return
 	}
 
@@ -435,19 +425,19 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 
 	if username == "" || password == "" {
-		writeLoginAlert(w, http.StatusUnprocessableEntity, "error", "Username and password are required.")
+		writeFormAlert(w, http.StatusUnprocessableEntity, "error", "Username and password are required.")
 		return
 	}
 
 	if !authenticateAdmin(db, username, password) {
-		writeLoginAlert(w, http.StatusUnauthorized, "error", "Invalid credentials.")
+		writeFormAlert(w, http.StatusUnauthorized, "error", "Invalid credentials.")
 		return
 	}
 
 	token, csrfToken, err := createSession(db, username)
 	if err != nil {
 		slog.Error("session creation failed", slog.Any("error", err))
-		writeLoginAlert(w, http.StatusInternalServerError, "error", "Could not create session.")
+		writeFormAlert(w, http.StatusInternalServerError, "error", "Could not create session.")
 		return
 	}
 
@@ -455,7 +445,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, sessionCookie("csrf_token", csrfToken, false))
 
 	w.Header().Set("HX-Refresh", "true")
-	writeLoginAlert(w, http.StatusOK, "success", "Logged in successfully!")
+	writeFormAlert(w, http.StatusOK, "success", "Logged in successfully!")
 }
 
 func logoutHandler(w http.ResponseWriter, r *http.Request) {
@@ -496,13 +486,13 @@ func adminCreatePostHandler(w http.ResponseWriter, r *http.Request) {
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxPostBodyBytes)
 	if err := r.ParseForm(); err != nil {
-		writePostAlert(w, http.StatusBadRequest, "error", "Invalid form data.")
+		writeFormAlert(w, http.StatusBadRequest, "error", "Invalid form data.")
 		return
 	}
 
 	post, validationMessage := readPostForm(r)
 	if validationMessage != "" {
-		writePostAlert(w, http.StatusUnprocessableEntity, "error", validationMessage)
+		writeFormAlert(w, http.StatusUnprocessableEntity, "error", validationMessage)
 		return
 	}
 
@@ -516,33 +506,22 @@ func adminCreatePostHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err := createPost(db, post); err != nil {
 		slog.Error("create post failed", slog.Any("error", err))
-		writePostAlert(w, http.StatusInternalServerError, "error", "Error publishing post. Slug may already exist.")
+		writeFormAlert(w, http.StatusInternalServerError, "error", "Error publishing post. Slug may already exist.")
 		return
 	}
 
 	w.Header().Set("HX-Trigger", "postCreated")
-	writePostAlert(w, http.StatusOK, "success", "Article published successfully!")
+	writeFormAlert(w, http.StatusOK, "success", "Article published successfully!")
 }
 
-func writeLoginAlert(w http.ResponseWriter, status int, kind, message string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(status)
-	_, _ = fmt.Fprintf(w, `<div class="form__alert form__alert--%s">%s</div>`, kind, message)
-}
-
-func writePostAlert(w http.ResponseWriter, status int, kind, message string) {
+func writeFormAlert(w http.ResponseWriter, status int, kind, message string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	_, _ = fmt.Fprintf(w, `<div class="form__alert form__alert--%s">%s</div>`, kind, message)
 }
 
 func adminDashboardHandler(w http.ResponseWriter, r *http.Request) {
-	cookie, _ := r.Cookie("session_token")
-	var token string
-	if cookie != nil {
-		token = cookie.Value
-	}
-	_, isAdmin := validateSession(db, token)
+	_, isAdmin := validateSession(db, sessionTokenFromRequest(r))
 	if !isAdmin {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -587,12 +566,7 @@ func adminDashboardHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func adminEditPostFormHandler(w http.ResponseWriter, r *http.Request) {
-	cookie, _ := r.Cookie("session_token")
-	var token string
-	if cookie != nil {
-		token = cookie.Value
-	}
-	_, isAdmin := validateSession(db, token)
+	_, isAdmin := validateSession(db, sessionTokenFromRequest(r))
 	if !isAdmin {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -651,25 +625,25 @@ func adminUpdatePostHandler(w http.ResponseWriter, r *http.Request) {
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxPostBodyBytes)
 	if err := r.ParseForm(); err != nil {
-		writePostAlert(w, http.StatusBadRequest, "error", "Invalid form data.")
+		writeFormAlert(w, http.StatusBadRequest, "error", "Invalid form data.")
 		return
 	}
 
 	post, validationMessage := readPostForm(r)
 	if validationMessage != "" {
-		writePostAlert(w, http.StatusUnprocessableEntity, "error", validationMessage)
+		writeFormAlert(w, http.StatusUnprocessableEntity, "error", validationMessage)
 		return
 	}
 	post.ID = id
 
 	if err := updatePost(db, post); err != nil {
 		slog.Error("update post failed", slog.Any("error", err))
-		writePostAlert(w, http.StatusInternalServerError, "error", "Error updating post.")
+		writeFormAlert(w, http.StatusInternalServerError, "error", "Error updating post.")
 		return
 	}
 
 	w.Header().Set("HX-Trigger", "postUpdated")
-	writePostAlert(w, http.StatusOK, "success", "Article updated successfully!")
+	writeFormAlert(w, http.StatusOK, "success", "Article updated successfully!")
 }
 
 func adminDeletePostHandler(w http.ResponseWriter, r *http.Request) {

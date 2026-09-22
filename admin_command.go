@@ -16,7 +16,7 @@ const adminUsage = `usage:
   portfolio admin set-password [--username <name>] [--password-stdin]
 
 Updates the admin password with an Argon2id hash and invalidates all active sessions.
-DATABASE_PATH selects the database (default /data/site.db).`
+DATABASE_PATH selects the database (default /data/site.db)`
 
 var adminUsernamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,32}$`)
 
@@ -68,7 +68,7 @@ func runAdminSetPassword(args []string) error {
 		return err
 	}
 
-	fmt.Fprintf(os.Stdout, "Password updated for admin user %q. All active sessions were invalidated.\n", *username)
+	_, _ = fmt.Fprintf(os.Stdout, "Password updated for admin user %q. All active sessions were invalidated.\n", *username)
 	return nil
 }
 

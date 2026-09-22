@@ -217,7 +217,10 @@
         <div class="modal__dialog" style="max-width: 1000px;">
             <button type="button" class="modal__close text-mono-sm" @click="adminDashboardModalOpen = false" aria-label="Close dashboard">[ CLOSE ]</button>
             <h2 class="text-xl uppercase" style="margin-bottom: var(--space-md);">Admin Management Panel</h2>
-            <div id="admin-dashboard-content">
+            <div id="admin-dashboard-content"
+                 hx-get="/api/admin/dashboard"
+                 hx-trigger="messageUpdated from:body"
+                 hx-swap="innerHTML">
                 <div class="text-mono-sm" style="padding: var(--space-xl);">[ LOADING DASHBOARD... ]</div>
             </div>
         </div>
