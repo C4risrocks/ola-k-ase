@@ -19,7 +19,7 @@ El contenedor es stateless. El único estado persistente vive en `/data`.
 
 ## Stack
 
-- Go `1.23.x`
+- Go `1.26.6+`
 - SQLite con `github.com/mattn/go-sqlite3`
 - HTMX
 - Alpine.js
@@ -68,7 +68,7 @@ make run         # servidor local
 make build       # binario con build info
 make test        # tests con race detector
 make lint        # golangci-lint local
-make lint-docker # golangci-lint v1.62.2 mediante Docker (sin instalación global)
+make lint-docker # golangci-lint v2.13.2 mediante Docker (sin instalación global)
 make vuln        # govulncheck
 make docker      # build BuildKit con imagen local
 make clean       # elimina únicamente binarios locales
@@ -91,6 +91,7 @@ El Dockerfile utiliza:
 - Build multi-stage.
 - CGO habilitado únicamente en la etapa builder por `go-sqlite3`.
 - `debian:bookworm-slim` como runtime compatible con SQLite CGO.
+- Actualizaciones de seguridad de Debian aplicadas en cada build (`apt-get upgrade`); las versiones de paquetes del sistema pueden variar entre builds aunque el digest base esté pinneado.
 - Usuario no privilegiado `appuser` con UID `10001`.
 - `HEALTHCHECK` contra `/health`.
 - Labels OCI con versión y revisión.

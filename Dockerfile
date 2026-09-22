@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
 # Base images pinned by digest; update deliberately after testing.
-FROM golang:1.23-bookworm@sha256:167053a2bb901972bf2c1611f8f52c44d5fe7e762e5cab213708d82c421614db AS builder
+FROM golang:1.26.6-bookworm@sha256:116d58cbd88c1297624acc6e967a060012422bacf9930927e23fb719189c6f36 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev && rm -rf /var/lib/apt/lists/*
 
@@ -44,7 +44,10 @@ LABEL org.opencontainers.image.version="${VERSION}"
 LABEL org.opencontainers.image.revision="${COMMIT}"
 LABEL org.opencontainers.image.created="${BUILD_DATE}"
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates wget && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends ca-certificates wget && \
+    rm -rf /var/lib/apt/lists/*
 
 # Create non-root user and prep /data volume
 RUN useradd --uid 10001 --create-home --no-log-init appuser && \

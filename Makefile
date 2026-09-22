@@ -25,11 +25,11 @@ lint:
 
 lint-docker:
 	@echo "Running golangci-lint in Docker..."
-	docker run --rm -v "$$(pwd)":/app -w /app golangci/golangci-lint:v1.62.2 golangci-lint run ./...
+	docker run --rm -v "$$(pwd)":/app -w /app golangci/golangci-lint:v2.13.2 golangci-lint run ./...
 
 vuln:
 	@echo "Running govulncheck..."
-	go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+	go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
 docker:
 	@echo "Building Docker image..."

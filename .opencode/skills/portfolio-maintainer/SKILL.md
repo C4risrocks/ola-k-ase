@@ -34,8 +34,9 @@ Guía operativa del repositorio `ola-k-ase` (portafolio cmoreno.org). Es complem
 - No renombrar rutas ni IDs usados como `hx-target`.
 - No cambiar atributos `hx-*`, `hx-trigger`, `hx-swap` ni el HTML que esperan los partials.
 - Nunca responder JSON en flujos HTMX.
-- Un mismo elemento no debería declarar `hx-post` y `hx-get` a la vez; existe ese caso en `templates/partials/admin_dashboard.html`.
-- Las secciones de `templates/index.html` usan `hx-trigger="none"`; el retry actual dispara `revealed` y probablemente no recarga. Para recargar manualmente, usar `htmx.ajax(...)`.
+- Un mismo elemento no debe declarar `hx-post` y `hx-get` a la vez.
+- Las secciones de `templates/index.html` usan `hx-trigger="none"`; para recargarlas manualmente (p. ej. el retry de `app.js`), usar `htmx.ajax(...)`.
+- Las mutaciones sobre mensajes emiten `HX-Trigger: messageUpdated`; `#admin-dashboard-content` se refresca vía `hx-trigger="messageUpdated from:body"`.
 - Alpine solo para estado efímero, observers y validación.
 
 ## Persistencia y migraciones
