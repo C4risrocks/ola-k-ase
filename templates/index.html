@@ -6,6 +6,8 @@
     <title>{{ .Profile.Name }} - {{ .Profile.Title }}</title>
     <meta name="description" content="Portfolio of {{ .Profile.Name }}, {{ .Profile.Title }}. Technology enthusiast with passion for networking, security, and software development.">
     <meta name="author" content="{{ .Profile.Name }}">
+    <meta name="theme-color" content="#0a0a0c">
+    <link rel="preload" href="/static/fonts/instrument-serif-400-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
 
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='0' fill='%230a0a0c'/><text x='50' y='66' text-anchor='middle' font-family='monospace' font-size='42' font-weight='700' fill='%230044ff'>CM</text></svg>">
@@ -15,7 +17,7 @@
 
     <!-- Styles -->
     <link rel="stylesheet" href="/static/css/phosphor.css">
-    <link rel="stylesheet" href="/static/css/style.css?v=3.2">
+    <link rel="stylesheet" href="/static/css/style.css?v=5">
 
     <!-- HTMX -->
     <script src="/static/js/htmx.min.js"></script>
@@ -24,30 +26,31 @@
     <script defer src="/static/js/alpine.min.js"></script>
 </head>
 <body>
+    <a class="skip-link" href="#about">Skip to content</a>
     <div id="scroll-sentinel" aria-hidden="true"></div>
 
     <!-- Navigation -->
-    <nav class="nav" :class="{ 'scrolled': scrolled }" id="main-nav">
+    <nav class="nav" :class="{ 'scrolled': scrolled, 'menu-open': mobileMenuOpen }" id="main-nav" aria-label="Main navigation" @keydown.escape.window="mobileMenuOpen = false">
         <div class="nav__inner">
-            <a href="#" class="nav__logo text-accent">
+            <a href="#hero" class="nav__logo text-accent" aria-label="Christian Moreno, back to top">
                 CM
             </a>
 
-            <div class="nav__links" :class="{ 'open': mobileMenuOpen }">
-                <a href="#about" class="nav__link" @click="mobileMenuOpen = false">About</a>
-                <a href="#skills" class="nav__link" @click="mobileMenuOpen = false">Skills</a>
-                <a href="#experience" class="nav__link" @click="mobileMenuOpen = false">Experience</a>
-                <a href="#education" class="nav__link" @click="mobileMenuOpen = false">Education</a>
-                <a href="#writing" class="nav__link" @click="mobileMenuOpen = false">Writing</a>
-                <a href="#contact" class="nav__link" @click="mobileMenuOpen = false">Contact</a>
+            <div class="nav__links" id="navigation-links" :class="{ 'open': mobileMenuOpen }" :inert="isMobile && !mobileMenuOpen">
+                <a href="#about" class="nav__link" :aria-current="activeSection === 'about' ? 'location' : null" @click="mobileMenuOpen = false">About</a>
+                <a href="#skills" class="nav__link" :aria-current="activeSection === 'skills' ? 'location' : null" @click="mobileMenuOpen = false">Skills</a>
+                <a href="#experience" class="nav__link" :aria-current="activeSection === 'experience' ? 'location' : null" @click="mobileMenuOpen = false">Experience</a>
+                <a href="#education" class="nav__link" :aria-current="activeSection === 'education' ? 'location' : null" @click="mobileMenuOpen = false">Education</a>
+                <a href="#writing" class="nav__link" :aria-current="activeSection === 'writing' ? 'location' : null" @click="mobileMenuOpen = false">Writing</a>
+                <a href="#contact" class="nav__link" :aria-current="activeSection === 'contact' ? 'location' : null" @click="mobileMenuOpen = false">Contact</a>
                 {{ if .IsAdmin }}
-                <button type="button" class="nav__link text-accent" hx-get="/api/admin/dashboard" hx-target="#admin-dashboard-content" hx-swap="innerHTML" @click="adminDashboardModalOpen = true">[ DASHBOARD ]</button>
+                <button type="button" class="nav__link text-accent" hx-get="/api/admin/dashboard" hx-target="#admin-dashboard-content" hx-swap="innerHTML" @click="adminDashboardModalOpen = true">DASHBOARD</button>
                 {{ end }}
             </div>
             
             <!-- Mobile Menu Toggle -->
             <div class="nav__actions" style="display: none;">
-                <button class="nav__burger text-mono-sm" @click="mobileMenuOpen = !mobileMenuOpen" aria-label="Toggle menu">
+                <button class="nav__burger text-mono-sm" @click="mobileMenuOpen = !mobileMenuOpen" aria-label="Toggle menu" aria-controls="navigation-links" :aria-expanded="mobileMenuOpen.toString()">
                     <span x-text="mobileMenuOpen ? '[ CLOSE ]' : '[ MENU ]'"></span>
                 </button>
             </div>
@@ -56,17 +59,44 @@
 
     <!-- Hero Section -->
     <section class="hero" id="hero" data-theme-color="black">
+        <div class="hero__visual" aria-hidden="true">
+            <svg viewBox="0 0 600 600" fill="none">
+                <g class="network-grid" stroke="currentColor" stroke-width="1">
+                    <path d="M0 100H600M0 200H600M0 300H600M0 400H600M0 500H600M100 0V600M200 0V600M300 0V600M400 0V600M500 0V600"/>
+                    <circle cx="300" cy="300" r="220"/><circle cx="300" cy="300" r="145"/>
+                </g>
+                <g class="network-path" stroke="currentColor" stroke-width="2">
+                    <path d="M80 190H210L300 300H440L520 410"/>
+                    <path d="M170 500V390L300 300V150L410 70"/>
+                    <path d="M80 410H180L300 300L440 190H520"/>
+                </g>
+                <g class="network-signal" data-signal stroke="#ffffff" stroke-width="3">
+                    <path d="M80 190H210L300 300H440L520 410" pathLength="100"/>
+                    <path d="M170 500V390L300 300V150L410 70" pathLength="100"/>
+                    <path d="M80 410H180L300 300L440 190H520" pathLength="100"/>
+                </g>
+                <g class="network-nodes" fill="currentColor">
+                    <rect x="72" y="182" width="16" height="16"/><rect x="512" y="402" width="16" height="16"/>
+                    <rect x="162" y="492" width="16" height="16"/><rect x="402" y="62" width="16" height="16"/>
+                    <rect x="72" y="402" width="16" height="16"/><rect x="512" y="182" width="16" height="16"/>
+                </g>
+                <rect class="network-core" x="274" y="274" width="52" height="52" fill="currentColor"/>
+                <path d="M290 300H310M300 290V310" stroke="#fff" stroke-width="2"/>
+                <g class="network-labels" fill="currentColor">
+                    <text x="64" y="166">NETWORK</text>
+                    <text x="405" y="49">SECURITY</text>
+                    <text x="414" y="447">SOFTWARE</text>
+                </g>
+            </svg>
+        </div>
         <div class="hero__content">
-            <div class="hero__eyebrow text-mono-sm">
-                HELLO, I'M
-            </div>
             <h1 class="hero__name text-huge">
                 {{ .Profile.Name }}
             </h1>
             <p class="hero__sub">
                 {{ .Profile.Title }} at <span class="text-accent">UNAM</span>. Networking & Security Enthusiast. Full-Stack Developer shaping the future of code.
             </p>
-            <div class="hero__actions" style="margin-top: var(--space-lg); display: flex; gap: var(--space-md);">
+            <div class="hero__actions">
                 <a href="#contact" class="btn">
                     CONTACT
                 </a>
@@ -75,6 +105,8 @@
                 </a>
             </div>
         </div>
+        <button type="button" class="hero__replay" @click="replaySignal()" aria-label="Replay network animation"><i class="ph ph-arrow-clockwise" aria-hidden="true"></i><span>REPLAY SIGNAL</span></button>
+        <div class="hero__foot"><span>NETWORKING / SECURITY / DEVELOPMENT</span><a href="#about">EXPLORE THE PORTFOLIO <i class="ph ph-arrow-down" aria-hidden="true"></i></a></div>
     </section>
 
     <!-- Main Content -->
@@ -136,16 +168,17 @@
     </footer>
 
     <!-- Alpine.js App -->
-    <script src="/static/js/app.js?v=1"></script>
+    <script src="/static/js/app.js?v=5"></script>
 
     <!-- Article Modal Overlay -->
     <div class="modal"
-         :class="{ 'active': postModalOpen }"
+         :class="{ 'active': postModalOpen }" :inert="!postModalOpen" :aria-hidden="(!postModalOpen).toString()"
          x-cloak
          @keydown.escape.window="postModalOpen = false"
          role="dialog"
          aria-modal="true"
-         aria-labelledby="modal-title">
+         aria-labelledby="modal-title"
+         aria-label="Article">
         <div class="modal__backdrop" @click="postModalOpen = false"></div>
         <div class="modal__dialog">
             <button type="button" class="modal__close text-mono-sm" @click="postModalOpen = false" aria-label="Close article">[ CLOSE ]</button>
@@ -156,7 +189,7 @@
     </div>
 
     <!-- Admin Login Modal -->
-    <div class="modal" :class="{ 'active': loginModalOpen }" x-cloak @keydown.escape.window="loginModalOpen = false" role="dialog" aria-modal="true">
+    <div class="modal" :class="{ 'active': loginModalOpen }" :inert="!loginModalOpen" :aria-hidden="(!loginModalOpen).toString()" x-cloak @keydown.escape.window="loginModalOpen = false" role="dialog" aria-modal="true" aria-label="Admin login">
         <div class="modal__backdrop" @click="loginModalOpen = false"></div>
         <div class="modal__dialog" style="max-width: 500px;">
             <button type="button" class="modal__close text-mono-sm" @click="loginModalOpen = false" aria-label="Close login">[ CLOSE ]</button>
@@ -172,13 +205,13 @@
                     <label class="form__label text-mono-sm" for="password">PASSWORD</label>
                     <input type="password" id="password" name="password" class="form__input" required autocomplete="current-password">
                 </div>
-                <button type="submit" class="btn" style="width: 100%; margin-top: var(--space-lg);">[ SIGN IN ]</button>
+                <button type="submit" class="btn" style="width: 100%; margin-top: var(--space-lg);">SIGN IN</button>
             </form>
         </div>
     </div>
 
     <!-- Admin New Post Modal -->
-    <div class="modal" :class="{ 'active': adminPostModalOpen }" x-cloak @keydown.escape.window="adminPostModalOpen = false" role="dialog" aria-modal="true">
+    <div class="modal" :class="{ 'active': adminPostModalOpen }" :inert="!adminPostModalOpen" :aria-hidden="(!adminPostModalOpen).toString()" x-cloak @keydown.escape.window="adminPostModalOpen = false" role="dialog" aria-modal="true" aria-label="Create article">
         <div class="modal__backdrop" @click="adminPostModalOpen = false"></div>
         <div class="modal__dialog" style="max-width: 750px;">
             <button type="button" class="modal__close text-mono-sm" @click="adminPostModalOpen = false" aria-label="Close form">[ CLOSE ]</button>
@@ -206,13 +239,13 @@
                     <label class="form__label text-mono-sm" for="post-content">CONTENT *</label>
                     <textarea id="post-content" name="content" class="form__input" rows="8" required placeholder="Article body content... Separate paragraphs with a blank line."></textarea>
                 </div>
-                <button type="submit" class="btn" style="width: 100%; margin-top: var(--space-lg);">[ PUBLISH ARTICLE ]</button>
+                <button type="submit" class="btn" style="width: 100%; margin-top: var(--space-lg);">PUBLISH ARTICLE</button>
             </form>
         </div>
     </div>
 
     <!-- Admin Dashboard Modal -->
-    <div class="modal" :class="{ 'active': adminDashboardModalOpen }" x-cloak @keydown.escape.window="adminDashboardModalOpen = false" role="dialog" aria-modal="true">
+    <div class="modal" :class="{ 'active': adminDashboardModalOpen }" :inert="!adminDashboardModalOpen" :aria-hidden="(!adminDashboardModalOpen).toString()" x-cloak @keydown.escape.window="adminDashboardModalOpen = false" role="dialog" aria-modal="true" aria-label="Admin management">
         <div class="modal__backdrop" @click="adminDashboardModalOpen = false"></div>
         <div class="modal__dialog" style="max-width: 1000px;">
             <button type="button" class="modal__close text-mono-sm" @click="adminDashboardModalOpen = false" aria-label="Close dashboard">[ CLOSE ]</button>
@@ -227,7 +260,7 @@
     </div>
 
     <!-- Admin Edit Post Modal -->
-    <div class="modal" :class="{ 'active': adminEditPostModalOpen }" x-cloak @keydown.escape.window="adminEditPostModalOpen = false" role="dialog" aria-modal="true">
+    <div class="modal" :class="{ 'active': adminEditPostModalOpen }" :inert="!adminEditPostModalOpen" :aria-hidden="(!adminEditPostModalOpen).toString()" x-cloak @keydown.escape.window="adminEditPostModalOpen = false" role="dialog" aria-modal="true" aria-label="Edit article">
         <div class="modal__backdrop" @click="adminEditPostModalOpen = false"></div>
         <div class="modal__dialog" style="max-width: 750px;">
             <button type="button" class="modal__close text-mono-sm" @click="adminEditPostModalOpen = false" aria-label="Close editor">[ CLOSE ]</button>

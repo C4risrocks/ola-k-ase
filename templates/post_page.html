@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-bg="black">
+<html lang="en" data-bg="black" class="post-page">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -11,19 +11,20 @@
 
     <!-- Styles -->
     <link rel="stylesheet" href="/static/css/phosphor.css">
-    <link rel="stylesheet" href="/static/css/style.css?v=3.2">
+    <link rel="stylesheet" href="/static/css/style.css?v=5">
 </head>
 <body>
+    <a class="skip-link" href="#article-content">Skip to article</a>
     <nav class="nav" id="main-nav">
         <div class="nav__inner">
             <a href="/" class="nav__logo text-accent">CM</a>
             <div class="nav__links">
-                <a href="/#writing" class="nav__link">[ &larr; BACK TO PORTFOLIO ]</a>
+                <a href="/#writing" class="nav__link">&larr; BACK TO PORTFOLIO</a>
             </div>
         </div>
     </nav>
 
-    <main class="section" style="padding-top: var(--space-2xl); min-height: 80vh;">
+    <main id="article-content" tabindex="-1" class="section" style="padding-top: var(--space-2xl); min-height: 80vh;">
         <div class="container" style="max-width: 900px;">
             <div class="post-detail">
                 <div class="post-detail__header">
@@ -48,7 +49,7 @@
                 </div>
 
                 <div class="post-detail__footer">
-                    <a href="/#writing" class="btn">[ &larr; RETURN TO PORTFOLIO ]</a>
+                    <a href="/#writing" class="btn">&larr; RETURN TO PORTFOLIO</a>
                 </div>
             </div>
         </div>

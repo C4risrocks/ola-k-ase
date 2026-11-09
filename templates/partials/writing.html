@@ -7,11 +7,11 @@
         </div>
         <div>
             {{ if .IsAdmin }}
-            <button type="button" class="btn text-accent" hx-get="/api/admin/dashboard" hx-target="#admin-dashboard-content" hx-swap="innerHTML" @click="adminDashboardModalOpen = true" style="margin-bottom: var(--space-md);">[ DASHBOARD ]</button>
-            <button type="button" class="btn" @click="adminPostModalOpen = true" style="margin-bottom: var(--space-md);">[ + NEW ARTICLE ]</button>
-            <button type="button" class="btn" hx-post="/api/logout" hx-trigger="click" style="margin-bottom: var(--space-md);">[ LOGOUT ]</button>
+            <button type="button" class="btn text-accent" hx-get="/api/admin/dashboard" hx-target="#admin-dashboard-content" hx-swap="innerHTML" @click="adminDashboardModalOpen = true" style="margin-bottom: var(--space-md);">DASHBOARD</button>
+            <button type="button" class="btn" @click="adminPostModalOpen = true" style="margin-bottom: var(--space-md);">+ NEW ARTICLE</button>
+            <button type="button" class="btn" hx-post="/api/logout" hx-trigger="click" style="margin-bottom: var(--space-md);">LOGOUT</button>
             {{ else }}
-            <button type="button" class="btn" @click="loginModalOpen = true" style="margin-bottom: var(--space-md);">[ ADMIN LOGIN ]</button>
+            <button type="button" class="btn" @click="loginModalOpen = true" style="margin-bottom: var(--space-md);">ADMIN LOGIN</button>
             {{ end }}
         </div>
     </div>
@@ -42,7 +42,7 @@
                    hx-target="#post-modal-content" 
                    hx-swap="innerHTML"
                    @click="postModalOpen = true">
-                    [ READ ARTICLE ]
+                    READ ARTICLE
                 </a>
             </div>
         </div>
